@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "Budget Buddy",
+    "slug": "budget-buddy",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light"
+  }
+}

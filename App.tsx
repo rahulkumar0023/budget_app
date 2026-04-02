@@ -100,11 +100,13 @@ import {
 import {
   createBudgetPasswordAccount,
   ensureBudgetCloudUser,
+  getBudgetAiMonthlyReview,
   loadBudgetCloudState,
   saveBudgetCloudState,
   signInBudgetPasswordUser,
   signOutBudgetUser,
   subscribeToBudgetAuth,
+  type BudgetAiMonthlyReviewResponse,
   type BudgetAuthUser,
 } from './firebaseClient';
 
@@ -139,6 +141,10 @@ type InsightSuggestion = {
   tone: AlertTone;
   title: string;
   body: string;
+};
+
+type MonthlyAiReview = BudgetAiMonthlyReviewResponse & {
+  generatedAt: number;
 };
 
 type WeeklyInsightRow = {
@@ -1132,6 +1138,9 @@ export default function App() {
   const [transactionSort, setTransactionSort] = useState<TransactionSort>('recent');
   const [insightWindow, setInsightWindow] = useState<InsightWindow>('quarter');
   const [insightSpendMode, setInsightSpendMode] = useState<InsightSpendMode>('all');
+  const [aiReviewByMonthId, setAiReviewByMonthId] = useState<Record<string, MonthlyAiReview>>({});
+  const [aiReviewBusyMonthId, setAiReviewBusyMonthId] = useState<string | null>(null);
+  const [aiReviewErrorByMonthId, setAiReviewErrorByMonthId] = useState<Record<string, string>>({});
   const [planSetupStep, setPlanSetupStep] = useState<BudgetSetupStep>('limit');
   const [showPlanCategoryList, setShowPlanCategoryList] = useState(false);
   const [showAllPlanCategories, setShowAllPlanCategories] = useState(false);
@@ -1316,6 +1325,21 @@ export default function App() {
       return activeMonthCurrencyCode;
     }
   })();
+  const formatCompactCurrency = (
+    value: number,
+    currencyCode: CurrencyCode = activeMonthCurrencyCode,
+  ) => {
+    try {
+      return new Intl.NumberFormat(localeTag, {
+        style: 'currency',
+        currency: currencyCode,
+        notation: 'compact',
+        maximumFractionDigits: Math.abs(value) >= 1000 ? 1 : 0,
+      }).format(value);
+    } catch {
+      return formatCurrency(value, currencyCode);
+    }
+  };
   const localeMonthPreview = getMonthLabel(activeMonth.id, localeTag);
   const hasActiveBudget = activeMonth ? activeMonth.categories.length > 0 : false;
   const activeMonthIsCurrent = activeMonth ? activeMonth.id === getMonthId(new Date()) : true;
@@ -1535,6 +1559,12 @@ export default function App() {
   const recurringPlanned = activeMonth.categories
     .filter((category) => category.recurring)
     .reduce((sum, category) => sum + category.planned, 0);
+  const recurringSpent = activeMonth.transactions
+    .filter((transaction) => transaction.recurring)
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const flexibleSpent = activeMonth.transactions
+    .filter((transaction) => !transaction.recurring)
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
   const topPlannedCategory =
     [...activeMonth.categories].sort((left, right) => right.planned - left.planned)[0] ?? null;
   const setupReviewItems = [
@@ -1602,6 +1632,81 @@ export default function App() {
       ? `Savings ${formatCurrency(savingsBucketSummary.planned)}`
       : 'No savings lane yet',
   ];
+  const aiReviewHistoryMonths = useMemo(
+    () =>
+      sortedMonths
+        .filter((month) => compareMonthIds(month.id, activeMonth.id) < 0)
+        .slice(0, 3)
+        .map((month) => {
+          const monthFixedSpent = month.transactions
+            .filter((transaction) => transaction.recurring)
+            .reduce((sum, transaction) => sum + transaction.amount, 0);
+          const monthFlexibleSpent = month.transactions
+            .filter((transaction) => !transaction.recurring)
+            .reduce((sum, transaction) => sum + transaction.amount, 0);
+          const monthSpent = monthFixedSpent + monthFlexibleSpent;
+          const monthPlanned = getTotalPlanned(month);
+
+          return {
+            currencyCode: month.currencyCode,
+            fixedShareRatio: monthSpent > 0 ? monthFixedSpent / monthSpent : 0,
+            label: getMonthLabel(month.id, localeTag),
+            planned: monthPlanned,
+            spent: monthSpent,
+            utilizationRatio: monthPlanned > 0 ? monthSpent / monthPlanned : 0,
+          };
+        }),
+    [activeMonth.id, localeTag, sortedMonths],
+  );
+  const aiReviewPayload = useMemo(
+    () => ({
+      categoryCount: activeMonth.categories.length,
+      currencyCode: activeMonth.currencyCode,
+      flexibleSpent,
+      historyMonths: aiReviewHistoryMonths,
+      localeTag,
+      monthId: activeMonth.id,
+      monthLabel: getMonthLabel(activeMonth.id, localeTag),
+      monthlyLimit: monthlyLimitNumber,
+      overBudgetCategoryCount: categorySummaries.filter((summary) => summary.left < 0).length,
+      recurringPlanned,
+      recurringSpent,
+      remaining: (monthlyLimitNumber > 0 ? monthlyLimitNumber : totalPlanned) - totalSpent,
+      reviewCategories: [...categorySummaries]
+        .sort(
+          (left, right) =>
+            right.spent - left.spent || right.category.planned - left.category.planned,
+        )
+        .slice(0, 8)
+        .map((summary) => ({
+          bucket: summary.category.bucket,
+          left: summary.left,
+          name: summary.category.name,
+          planned: summary.category.planned,
+          recurring: summary.category.recurring,
+          spent: summary.spent,
+          tone: summary.tone,
+        })),
+      savingsPlanned: savingsBucketSummary?.planned ?? 0,
+      totalPlanned,
+      totalSpent,
+    }),
+    [
+      activeMonth.categories.length,
+      activeMonth.currencyCode,
+      activeMonth.id,
+      aiReviewHistoryMonths,
+      categorySummaries,
+      flexibleSpent,
+      localeTag,
+      monthlyLimitNumber,
+      recurringPlanned,
+      recurringSpent,
+      savingsBucketSummary?.planned,
+      totalPlanned,
+      totalSpent,
+    ],
+  );
   const insightMonths = useMemo(() => {
     const windowSize = insightWindowMeta[insightWindow].months;
     const monthsUpToActive = sortedMonths.filter((month) => compareMonthIds(month.id, activeMonth.id) <= 0);
@@ -1664,10 +1769,21 @@ export default function App() {
         ? 'Adjustable view compares flexible-spend share within each month because currencies differ across the window.'
         : 'Each bar shows how much of that month plan was used, with fixed and flexible spend split inside the fill.'
       : insightSpendMode === 'adjustable'
-      ? insightSummary.topAdjustableCategory
-        ? `${insightSummary.topAdjustableCategory.name} is the biggest adjustable category in this window.`
-        : 'Showing adjustable spend only. Fixed recurring costs are excluded from these bars.'
-      : insightRangeLead;
+        ? insightSummary.topAdjustableCategory
+          ? `${insightSummary.topAdjustableCategory.name} is the biggest adjustable category in this window.`
+          : 'Showing adjustable spend only. Fixed recurring costs are excluded from these bars.'
+        : insightRangeLead;
+  const activeAiReview = aiReviewByMonthId[activeMonth.id] ?? null;
+  const activeAiReviewError = aiReviewErrorByMonthId[activeMonth.id] ?? '';
+  const aiReviewBusy = aiReviewBusyMonthId === activeMonth.id;
+  const aiReviewGeneratedLabel = activeAiReview
+    ? new Intl.DateTimeFormat(localeTag, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(new Date(activeAiReview.generatedAt))
+    : '';
 
   const categoryToneById = useMemo(
     () =>
@@ -2600,6 +2716,49 @@ export default function App() {
         },
       ],
     );
+  };
+
+  const generateAiMonthlyReview = async () => {
+    if (activeMonth.categories.length === 0) {
+      setAiReviewErrorByMonthId((current) => ({
+        ...current,
+        [activeMonth.id]: 'Add at least one category before generating a monthly review.',
+      }));
+      return;
+    }
+
+    setAiReviewBusyMonthId(activeMonth.id);
+    setAiReviewErrorByMonthId((current) => ({
+      ...current,
+      [activeMonth.id]: '',
+    }));
+
+    try {
+      if (!authUser) {
+        await ensureBudgetCloudUser();
+      }
+
+      const review = await getBudgetAiMonthlyReview(aiReviewPayload);
+
+      if (!review) {
+        throw new Error('No AI review returned.');
+      }
+
+      setAiReviewByMonthId((current) => ({
+        ...current,
+        [activeMonth.id]: {
+          ...review,
+          generatedAt: Date.now(),
+        },
+      }));
+    } catch {
+      setAiReviewErrorByMonthId((current) => ({
+        ...current,
+        [activeMonth.id]: 'Gemini review is unavailable right now. Try again in a moment.',
+      }));
+    } finally {
+      setAiReviewBusyMonthId((current) => (current === activeMonth.id ? null : current));
+    }
   };
 
   const selectMonth = (monthId: string) => {
@@ -6286,7 +6445,9 @@ export default function App() {
 
                   return (
                     <View key={row.label} style={styles.weeklyInsightMiniCard}>
-                      <Text style={styles.weeklyInsightMiniLabel}>{row.label}</Text>
+                      <Text style={styles.weeklyInsightMiniLabel}>
+                        {isNarrow ? row.shortLabel : row.label}
+                      </Text>
                       <View
                         style={[
                           styles.weeklyInsightMiniState,
@@ -6316,12 +6477,13 @@ export default function App() {
                       </View>
 
                       <View style={styles.weeklyInsightMiniTrack}>
+                        <View style={styles.weeklyInsightMiniAxis} />
                         {row.total > 0 ? (
                           <View style={[styles.weeklyInsightMiniFill, { height: fillHeight }]}>
                             {row.fixed > 0 ? (
                               <View
                                 style={[
-                                  styles.weeklyInsightFixed,
+                                  styles.weeklyInsightMiniFixed,
                                   { flex: row.fixed / totalForMix },
                                 ]}
                               />
@@ -6329,7 +6491,7 @@ export default function App() {
                             {row.flexible > 0 ? (
                               <View
                                 style={[
-                                  styles.weeklyInsightFlexible,
+                                  styles.weeklyInsightMiniFlexible,
                                   { flex: row.flexible / totalForMix },
                                 ]}
                               />
@@ -6338,10 +6500,14 @@ export default function App() {
                         ) : null}
                       </View>
 
-                      <Text style={styles.weeklyInsightMiniAmount}>{formatCurrency(row.total)}</Text>
+                      <Text style={styles.weeklyInsightMiniAmount}>
+                        {formatCompactCurrency(row.total)}
+                      </Text>
                       <Text style={styles.weeklyInsightMiniMeta}>
                         {row.total > 0
-                          ? `Fixed ${formatCurrency(row.fixed)}`
+                          ? row.flexible > 0
+                            ? `Fixed ${formatCompactCurrency(row.fixed)} · Flex ${formatCompactCurrency(row.flexible)}`
+                            : `Fixed ${formatCompactCurrency(row.fixed)}`
                           : row.state === 'upcoming'
                             ? 'Not started'
                             : 'No spend'}
@@ -6585,6 +6751,74 @@ export default function App() {
                   </View>
                 ))}
               </View>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionHeaderCopy}>
+                  <Text style={styles.sectionTitle}>AI monthly review</Text>
+                  <Text style={styles.sectionSubtitle}>
+                    Server-side Gemini review using monthly aggregates only. No raw notes are sent.
+                  </Text>
+                </View>
+
+                <Pressable
+                  style={styles.tertiaryButton}
+                  onPress={generateAiMonthlyReview}
+                  disabled={aiReviewBusy}
+                >
+                  <Text style={styles.tertiaryButtonText}>
+                    {aiReviewBusy
+                      ? 'Generating...'
+                      : activeAiReview
+                        ? 'Refresh review'
+                        : 'Generate review'}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {activeAiReview ? (
+                <>
+                  <View style={styles.aiReviewMetaRow}>
+                    <View style={styles.deltaChip}>
+                      <Text style={styles.deltaChipText}>{activeAiReview.model}</Text>
+                    </View>
+                    <Text style={styles.forecastStatMeta}>Updated {aiReviewGeneratedLabel}</Text>
+                  </View>
+
+                  <View style={styles.aiReviewSummaryCard}>
+                    <Text style={styles.reviewTitle}>{activeAiReview.headline}</Text>
+                    <Text style={styles.aiReviewSummaryText}>{activeAiReview.summary}</Text>
+                  </View>
+
+                  <View style={styles.aiReviewWatchout}>
+                    <Text style={styles.fieldLabel}>Watchout</Text>
+                    <Text style={styles.suggestionText}>{activeAiReview.watchout}</Text>
+                  </View>
+
+                  <View style={styles.aiReviewActionList}>
+                    {activeAiReview.actions.map((action, index) => (
+                      <View key={`${action}-${index}`} style={styles.aiReviewActionRow}>
+                        <View style={styles.aiReviewActionIndex}>
+                          <Text style={styles.suggestionBadgeText}>{index + 1}</Text>
+                        </View>
+                        <Text style={styles.aiReviewActionText}>{action}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              ) : (
+                <View style={styles.emptyStateCompact}>
+                  <Text style={styles.emptyTitle}>No AI review yet</Text>
+                  <Text style={styles.emptyText}>
+                    Generate one concise monthly review when you want a second opinion on how to improve the budget.
+                  </Text>
+                </View>
+              )}
+
+              {activeAiReviewError ? (
+                <Text style={styles.aiReviewErrorText}>{activeAiReviewError}</Text>
+              ) : null}
             </View>
           </>
         ) : null}
@@ -9007,23 +9241,23 @@ const createStyles = (
     weeklyInsightMiniCard: {
       flex: 1,
       backgroundColor: theme.surfaceMuted,
-      borderRadius: 18,
+      borderRadius: 16,
       paddingHorizontal: 8,
-      paddingVertical: 10,
+      paddingVertical: 9,
       borderWidth: 1,
       borderColor: theme.divider,
       alignItems: 'center',
-      gap: 6,
+      gap: 5,
       minWidth: 0,
     },
     weeklyInsightMiniLabel: {
       color: theme.text,
-      fontSize: 11,
+      fontSize: 10,
       fontWeight: '800',
     },
     weeklyInsightMiniState: {
       borderRadius: 999,
-      paddingHorizontal: 7,
+      paddingHorizontal: 6,
       paddingVertical: 3,
     },
     weeklyInsightMiniStateText: {
@@ -9032,32 +9266,51 @@ const createStyles = (
     },
     weeklyInsightMiniTrack: {
       width: '100%',
-      height: 64,
-      borderRadius: 14,
-      backgroundColor: theme.surfaceStrong,
-      overflow: 'hidden',
+      height: 82,
       justifyContent: 'flex-end',
-      padding: 6,
+      alignItems: 'center',
+      position: 'relative',
+      paddingBottom: 4,
+    },
+    weeklyInsightMiniAxis: {
+      position: 'absolute',
+      left: '16%',
+      right: '16%',
+      bottom: 4,
+      height: 2,
+      borderRadius: 999,
+      backgroundColor: theme.divider,
     },
     weeklyInsightMiniFill: {
-      width: '100%',
-      borderRadius: 999,
+      width: '46%',
+      minWidth: 18,
+      maxWidth: 28,
+      borderRadius: 12,
       overflow: 'hidden',
       justifyContent: 'flex-end',
+      backgroundColor: theme.surfaceStrong,
+    },
+    weeklyInsightMiniFixed: {
+      width: '100%',
+      backgroundColor: theme.accentSoft,
+    },
+    weeklyInsightMiniFlexible: {
+      width: '100%',
+      backgroundColor: theme.accent,
     },
     weeklyInsightMiniAmount: {
       color: theme.text,
-      fontSize: 11,
+      fontSize: 10,
       fontWeight: '800',
       textAlign: 'center',
     },
     weeklyInsightMiniMeta: {
       color: theme.textMuted,
-      fontSize: 9,
+      fontSize: 8,
       fontWeight: '700',
       textAlign: 'center',
-      lineHeight: 12,
-      minHeight: 24,
+      lineHeight: 11,
+      minHeight: 22,
     },
     weeklyInsightRow: {
       backgroundColor: theme.surfaceMuted,
@@ -9261,6 +9514,69 @@ const createStyles = (
       flex: 1,
       color: theme.text,
       lineHeight: 20,
+    },
+    aiReviewMetaRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 10,
+      marginTop: 12,
+    },
+    aiReviewSummaryCard: {
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 18,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      gap: 6,
+      marginTop: 10,
+    },
+    aiReviewSummaryText: {
+      color: theme.text,
+      lineHeight: 20,
+    },
+    aiReviewWatchout: {
+      backgroundColor: theme.warningSurface,
+      borderRadius: 18,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      gap: 6,
+      marginTop: 10,
+    },
+    aiReviewActionList: {
+      gap: 8,
+      marginTop: 10,
+    },
+    aiReviewActionRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 16,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: theme.divider,
+    },
+    aiReviewActionIndex: {
+      width: 24,
+      height: 24,
+      borderRadius: 999,
+      backgroundColor: theme.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 1,
+    },
+    aiReviewActionText: {
+      flex: 1,
+      color: theme.text,
+      lineHeight: 18,
+    },
+    aiReviewErrorText: {
+      color: theme.alertText,
+      fontSize: 12,
+      lineHeight: 18,
+      marginTop: 10,
     },
     emptyTitle: {
       color: theme.text,

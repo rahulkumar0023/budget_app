@@ -39,26 +39,90 @@ export type BudgetAuthUser = {
 };
 
 export type BudgetAiSuggestionRequest = {
-  averageMonthlySpend: number;
+  categoryCount: number;
   currencyCode: string;
-  localeTag: string;
-  monthCount: number;
-  months: Array<{
+  flexibleSpent: number;
+  historyMonths: Array<{
+    currencyCode: string;
+    fixedShareRatio: number;
     label: string;
     planned: number;
     spent: number;
+    utilizationRatio: number;
   }>;
-  overBudgetMonths: number;
-  topCategory: { name: string; spent: number } | null;
+  localeTag: string;
+  monthId: string;
+  monthLabel: string;
+  monthlyLimit: number;
+  overBudgetCategoryCount: number;
+  recurringPlanned: number;
+  recurringSpent: number;
+  remaining: number;
+  reviewCategories: Array<{
+    bucket: string;
+    left: number;
+    name: string;
+    planned: number;
+    recurring: boolean;
+    spent: number;
+    tone: string;
+  }>;
+  savingsPlanned: number;
   totalPlanned: number;
   totalSpent: number;
-  trendDelta: number | null;
-  windowLabel: string;
 };
 
+export type BudgetAiMonthlyReviewRequest = BudgetAiSuggestionRequest;
+
 export type BudgetAiSuggestionResponse = {
+  actions: string[];
+  headline: string;
   model: string;
-  suggestions: string[];
+  summary: string;
+  watchout: string;
+};
+
+export type BudgetAiMonthlyReviewResponse = BudgetAiSuggestionResponse;
+
+export const getBudgetAiMonthlyReview = async (
+  payload: BudgetAiMonthlyReviewRequest,
+): Promise<BudgetAiMonthlyReviewResponse | null> => {
+  const callBudgetAiMonthlyReview = httpsCallable<
+    BudgetAiMonthlyReviewRequest,
+    BudgetAiMonthlyReviewResponse
+  >(functions, 'generateBudgetAiMonthlyReview');
+
+  try {
+    const result = await callBudgetAiMonthlyReview(payload);
+    const data = result.data;
+
+    if (
+      !data ||
+      typeof data.headline !== 'string' ||
+      typeof data.summary !== 'string' ||
+      typeof data.watchout !== 'string' ||
+      !Array.isArray(data.actions) ||
+      data.actions.some((item) => typeof item !== 'string')
+    ) {
+      return null;
+    }
+
+    return {
+      actions: data.actions.slice(0, 3),
+      headline: data.headline,
+      model: typeof data.model === 'string' ? data.model : 'unknown',
+      summary: data.summary,
+      watchout: data.watchout,
+    };
+  } catch {
+    return null;
+  }
+};
+
+export const getBudgetAiSuggestions = async (
+  payload: BudgetAiSuggestionRequest,
+): Promise<BudgetAiSuggestionResponse | null> => {
+  return getBudgetAiMonthlyReview(payload);
 };
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -169,33 +233,4 @@ export const loadBudgetCloudState = async (userId: string): Promise<unknown | nu
 
 export const saveBudgetCloudState = async (userId: string, state: BudgetAppState) => {
   await setDoc(doc(firestore, 'users', userId, 'budget', 'app'), state, { merge: false });
-};
-
-export const getBudgetAiSuggestions = async (
-  payload: BudgetAiSuggestionRequest,
-): Promise<BudgetAiSuggestionResponse | null> => {
-  const callBudgetAiSuggestions = httpsCallable<
-    BudgetAiSuggestionRequest,
-    BudgetAiSuggestionResponse
-  >(functions, 'generateBudgetAiSuggestions');
-
-  try {
-    const result = await callBudgetAiSuggestions(payload);
-    const data = result.data;
-
-    if (
-      !data ||
-      !Array.isArray(data.suggestions) ||
-      data.suggestions.some((item) => typeof item !== 'string')
-    ) {
-      return null;
-    }
-
-    return {
-      model: typeof data.model === 'string' ? data.model : 'unknown',
-      suggestions: data.suggestions.slice(0, 3),
-    };
-  } catch {
-    return null;
-  }
 };

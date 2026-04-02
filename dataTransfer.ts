@@ -2,6 +2,9 @@ import { PDFDocument } from 'pdf-lib';
 import * as XLSX from 'xlsx';
 import {
   appThemes,
+  parseBankAccountCustomKinds,
+  normalizeBankAccountKinds,
+  normalizeBankAccountKind,
   buildIsoDateForMonth,
   clamp,
   createId,
@@ -15,12 +18,15 @@ import {
   getProjectedSpend,
   getTotalPlanned,
   getTotalSpent,
+  inferCategoryBucket,
   inferThemeId,
+  parseSubcategoryInput,
   normalizeCurrencyCode,
   normalizeLanguageCode,
   normalizeBudgetAppState,
   type AppPreferences,
   type AppThemeId,
+  type BankAccount,
   type BudgetAppState,
   type Category,
   type Goal,
@@ -75,15 +81,21 @@ const monthTokenMap: Record<string, number> = {
 
 const csvHeaders = [
   'monthId',
+  'monthCurrencyCode',
   'monthlyLimit',
   'categoryName',
   'categoryPlanned',
+  'categoryBucket',
   'categoryThemeId',
   'categoryRecurring',
+  'categorySubcategories',
   'amount',
   'note',
   'happenedAt',
   'transactionRecurring',
+  'transactionAccountName',
+  'transactionAccountKinds',
+  'transactionAccountCustomKinds',
 ] as const;
 
 const normalizeBoolean = (value: unknown, fallback = false) => {
@@ -217,22 +229,70 @@ const parseCsv = (source: string) => {
 
 type ImportedMonth = {
   id: string;
+  currencyCode: string;
   monthlyLimit: string;
   categoryMap: Map<string, Category>;
   transactions: Transaction[];
 };
 
-const ensureImportedMonth = (months: Map<string, ImportedMonth>, monthId: string, monthlyLimit: string) => {
+const ensureImportedAccount = (
+  accounts: Map<string, BankAccount>,
+  input: {
+    name?: unknown;
+    kinds?: unknown;
+    customKinds?: unknown;
+    kind?: unknown;
+    importedId?: string;
+  },
+) => {
+  const name = typeof input.name === 'string' ? input.name.trim() : '';
+
+  if (!name) {
+    return null;
+  }
+
+  const key = input.importedId || name.toLowerCase();
+  const existing = accounts.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const customKinds = parseBankAccountCustomKinds(input.customKinds);
+
+  const account: BankAccount = {
+    id: createId('acct'),
+    name,
+    kinds: normalizeBankAccountKinds(
+      input.kinds ?? input.kind,
+      customKinds.length > 0 ? [] : [normalizeBankAccountKind(input.kind)],
+    ),
+    customKinds,
+  };
+  accounts.set(key, account);
+  return account;
+};
+
+const ensureImportedMonth = (
+  months: Map<string, ImportedMonth>,
+  monthId: string,
+  monthlyLimit: string,
+  currencyCode: unknown = defaultCurrencyCode,
+) => {
+  const normalizedCurrencyCode = normalizeCurrencyCode(currencyCode);
   const existing = months.get(monthId);
   if (existing) {
     if (monthlyLimit && !existing.monthlyLimit) {
       existing.monthlyLimit = monthlyLimit;
+    }
+    if (!existing.currencyCode) {
+      existing.currencyCode = normalizedCurrencyCode;
     }
     return existing;
   }
 
   const nextMonth: ImportedMonth = {
     id: monthId,
+    currencyCode: normalizedCurrencyCode,
     monthlyLimit,
     categoryMap: new Map(),
     transactions: [],
@@ -246,6 +306,8 @@ const ensureImportedCategory = (
   input: {
     name: string;
     planned: number;
+    subcategories?: unknown;
+    bucket?: unknown;
     themeId?: unknown;
     recurring?: unknown;
     importedId?: string;
@@ -261,6 +323,11 @@ const ensureImportedCategory = (
     id: createId('cat'),
     name: input.name.trim(),
     planned: input.planned > 0 ? input.planned : 0,
+    subcategories: parseSubcategoryInput(input.subcategories),
+    bucket:
+      typeof input.bucket === 'string' && ['needs', 'wants', 'savings'].includes(input.bucket)
+        ? (input.bucket as Category['bucket'])
+        : inferCategoryBucket(input.name),
     themeId: normalizeThemeId(input.themeId, inferThemeId(input.name, month.categoryMap.size)),
     recurring: normalizeBoolean(input.recurring),
   };
@@ -270,6 +337,7 @@ const ensureImportedCategory = (
 
 const finalizeImportedState = (
   months: Map<string, ImportedMonth>,
+  accounts: Map<string, BankAccount>,
   goals: Goal[],
   preferences: AppPreferences,
   referenceDate: Date,
@@ -278,6 +346,7 @@ const finalizeImportedState = (
   const nextMonths: MonthRecord[] = [...months.values()]
     .map((month) => ({
       id: month.id,
+      currencyCode: normalizeCurrencyCode(month.currencyCode, preferences.currencyCode),
       monthlyLimit:
         month.monthlyLimit ||
         String(
@@ -295,9 +364,10 @@ const finalizeImportedState = (
 
   return normalizeBudgetAppState(
     {
-      version: 3,
+      version: 4,
       activeMonthId: requestedActiveMonthId || nextMonths[0].id,
       months: nextMonths,
+      accounts: [...accounts.values()],
       goals,
       preferences,
       updatedAt: Date.now(),
@@ -318,11 +388,16 @@ export const buildLedgerCsv = (appState: BudgetAppState) => {
       if (categoryTransactions.length === 0) {
         rows.push([
           month.id,
+          month.currencyCode,
           month.monthlyLimit,
           category.name,
           String(category.planned),
+          category.bucket,
           category.themeId,
           String(category.recurring),
+          category.subcategories.join(' | '),
+          '',
+          '',
           '',
           '',
           '',
@@ -332,17 +407,27 @@ export const buildLedgerCsv = (appState: BudgetAppState) => {
       }
 
       categoryTransactions.forEach((transaction) => {
+        const account =
+          transaction.accountId
+            ? appState.accounts.find((entry) => entry.id === transaction.accountId) ?? null
+            : null;
         rows.push([
           month.id,
+          month.currencyCode,
           month.monthlyLimit,
           category.name,
           String(category.planned),
+          category.bucket,
           category.themeId,
           String(category.recurring),
+          category.subcategories.join(' | '),
           String(transaction.amount),
           transaction.note,
           transaction.happenedAt,
           String(transaction.recurring),
+          account?.name ?? '',
+          account?.kinds.join('|') ?? '',
+          account?.customKinds.join('|') ?? '',
         ]);
       });
     });
@@ -360,26 +445,51 @@ export const importLedgerCsv = (csv: string, referenceDate = new Date()) => {
   const header = rows[0];
   const columnIndex = Object.fromEntries(header.map((cell, index) => [cell.trim(), index]));
   const months = new Map<string, ImportedMonth>();
+  const accounts = new Map<string, BankAccount>();
 
   rows.slice(1).forEach((row) => {
     const monthId = row[columnIndex.monthId] || getMonthId(referenceDate);
+    const monthCurrencyCode =
+      columnIndex.monthCurrencyCode !== undefined ? row[columnIndex.monthCurrencyCode] : defaultCurrencyCode;
     const monthlyLimit = row[columnIndex.monthlyLimit] || '0';
     const categoryName = row[columnIndex.categoryName]?.trim();
+    const categorySubcategories =
+      columnIndex.categorySubcategories !== undefined
+        ? row[columnIndex.categorySubcategories]
+        : undefined;
 
     if (!categoryName) {
       return;
     }
 
-    const month = ensureImportedMonth(months, monthId, monthlyLimit);
+    const month = ensureImportedMonth(months, monthId, monthlyLimit, monthCurrencyCode);
     const category = ensureImportedCategory(month, {
       name: categoryName,
       planned: normalizeNumber(row[columnIndex.categoryPlanned]),
+      subcategories: categorySubcategories,
+      bucket: row[columnIndex.categoryBucket],
       themeId: row[columnIndex.categoryThemeId],
       recurring: row[columnIndex.categoryRecurring],
     });
 
     const amount = normalizeNumber(row[columnIndex.amount], NaN);
     const happenedAt = row[columnIndex.happenedAt];
+    const account =
+      columnIndex.transactionAccountName !== undefined
+        ? ensureImportedAccount(accounts, {
+            name: row[columnIndex.transactionAccountName],
+            kinds:
+              columnIndex.transactionAccountKinds !== undefined
+                ? row[columnIndex.transactionAccountKinds]
+                : columnIndex.transactionAccountKind !== undefined
+                  ? row[columnIndex.transactionAccountKind]
+                  : undefined,
+            customKinds:
+              columnIndex.transactionAccountCustomKinds !== undefined
+                ? row[columnIndex.transactionAccountCustomKinds]
+                : undefined,
+          })
+        : null;
 
     if (!Number.isFinite(amount) || amount <= 0 || !happenedAt) {
       return;
@@ -388,6 +498,7 @@ export const importLedgerCsv = (csv: string, referenceDate = new Date()) => {
     month.transactions.push({
       id: createId('txn'),
       categoryId: category.id,
+      accountId: account?.id,
       amount,
       note: row[columnIndex.note] || '',
       happenedAt,
@@ -397,6 +508,7 @@ export const importLedgerCsv = (csv: string, referenceDate = new Date()) => {
 
   return finalizeImportedState(
     months,
+    accounts,
     [],
     {
       appThemeId: 'sunrise',
@@ -415,6 +527,7 @@ export const buildWorkbookBase64 = (appState: BudgetAppState) => {
   const summaryRows = appState.months.map((month) => ({
     monthId: month.id,
     monthLabel: getMonthLabel(month.id),
+    currencyCode: month.currencyCode,
     monthlyLimit: month.monthlyLimit,
     planned: getTotalPlanned(month),
     spent: getTotalSpent(month),
@@ -423,6 +536,7 @@ export const buildWorkbookBase64 = (appState: BudgetAppState) => {
 
   const monthRows = appState.months.map((month) => ({
     monthId: month.id,
+    currencyCode: month.currencyCode,
     monthlyLimit: month.monthlyLimit,
   }));
 
@@ -432,6 +546,8 @@ export const buildWorkbookBase64 = (appState: BudgetAppState) => {
       id: category.id,
       name: category.name,
       planned: category.planned,
+      subcategories: category.subcategories.join(' | '),
+      bucket: category.bucket,
       themeId: category.themeId,
       recurring: category.recurring,
     })),
@@ -442,12 +558,26 @@ export const buildWorkbookBase64 = (appState: BudgetAppState) => {
       monthId: month.id,
       id: transaction.id,
       categoryId: transaction.categoryId,
+      accountId: transaction.accountId ?? '',
+      accountName:
+        appState.accounts.find((account) => account.id === transaction.accountId)?.name ?? '',
+      accountKinds:
+        appState.accounts.find((account) => account.id === transaction.accountId)?.kinds.join('|') ?? '',
+      accountCustomKinds:
+        appState.accounts.find((account) => account.id === transaction.accountId)?.customKinds.join('|') ?? '',
       amount: transaction.amount,
       note: transaction.note,
       happenedAt: transaction.happenedAt,
       recurring: transaction.recurring,
     })),
   );
+
+  const accountRows = appState.accounts.map((account) => ({
+    id: account.id,
+    name: account.name,
+    kinds: account.kinds.join('|'),
+    customKinds: account.customKinds.join('|'),
+  }));
 
   const goalRows = appState.goals.map((goal) => ({
     id: goal.id,
@@ -471,6 +601,7 @@ export const buildWorkbookBase64 = (appState: BudgetAppState) => {
 
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'Summary');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(monthRows), 'Months');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(accountRows), 'Accounts');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(categoryRows), 'Categories');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(transactionRows), 'Transactions');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(goalRows), 'Goals');
@@ -489,6 +620,7 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
   };
 
   const monthRows = getSheetRows('Months');
+  const accountRows = getSheetRows('Accounts');
   const categoryRows = getSheetRows('Categories');
   const transactionRows = getSheetRows('Transactions');
 
@@ -502,12 +634,27 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
   }
 
   const months = new Map<string, ImportedMonth>();
+  const accounts = new Map<string, BankAccount>();
   const categoryIdMap = new Map<string, string>();
+  const accountIdMap = new Map<string, string>();
 
   monthRows.forEach((row) => {
     const monthId = typeof row.monthId === 'string' && row.monthId ? row.monthId : getMonthId(referenceDate);
     const monthlyLimit = typeof row.monthlyLimit === 'string' ? row.monthlyLimit : String(row.monthlyLimit || '0');
-    ensureImportedMonth(months, monthId, monthlyLimit);
+    ensureImportedMonth(months, monthId, monthlyLimit, row.currencyCode);
+  });
+
+  accountRows.forEach((row) => {
+    const account = ensureImportedAccount(accounts, {
+      name: row.name,
+      kinds: row.kinds ?? row.kind,
+      customKinds: row.customKinds,
+      importedId: typeof row.id === 'string' ? row.id : undefined,
+    });
+
+    if (account && typeof row.id === 'string' && row.id) {
+      accountIdMap.set(row.id, account.id);
+    }
   });
 
   categoryRows.forEach((row) => {
@@ -516,6 +663,7 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
       months,
       monthId,
       typeof row.monthlyLimit === 'string' ? row.monthlyLimit : '0',
+      row.currencyCode,
     );
     const name = typeof row.name === 'string' ? row.name.trim() : '';
     if (!name) {
@@ -524,6 +672,8 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
     const category = ensureImportedCategory(month, {
       name,
       planned: normalizeNumber(row.planned),
+      subcategories: row.subcategories,
+      bucket: row.bucket,
       themeId: row.themeId,
       recurring: row.recurring,
       importedId: typeof row.id === 'string' ? row.id : undefined,
@@ -536,7 +686,7 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
 
   transactionRows.forEach((row) => {
     const monthId = typeof row.monthId === 'string' && row.monthId ? row.monthId : getMonthId(referenceDate);
-    const month = ensureImportedMonth(months, monthId, '0');
+    const month = ensureImportedMonth(months, monthId, '0', row.currencyCode);
     const amount = normalizeNumber(row.amount, NaN);
     const happenedAt = typeof row.happenedAt === 'string' ? row.happenedAt : '';
 
@@ -548,11 +698,20 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
       typeof row.categoryId === 'string' && row.categoryId
         ? categoryIdMap.get(`${monthId}:${row.categoryId}`)
         : undefined;
+    const accountId =
+      typeof row.accountId === 'string' && row.accountId
+        ? accountIdMap.get(row.accountId)
+        : ensureImportedAccount(accounts, {
+            name: row.accountName,
+            kinds: row.accountKinds ?? row.accountKind,
+            customKinds: row.accountCustomKinds,
+          })?.id;
 
     if (!categoryId) {
       const fallbackCategory = ensureImportedCategory(month, {
         name: typeof row.categoryName === 'string' && row.categoryName ? row.categoryName : 'Imported',
         planned: 0,
+        bucket: row.bucket,
         themeId: row.themeId,
         recurring: row.recurring,
       });
@@ -562,6 +721,7 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
     month.transactions.push({
       id: typeof row.id === 'string' && row.id ? row.id : createId('txn'),
       categoryId,
+      accountId,
       amount,
       note: typeof row.note === 'string' ? row.note : '',
       happenedAt,
@@ -611,6 +771,7 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
 
   return finalizeImportedState(
     months,
+    accounts,
     goals,
     { appThemeId, currencyCode, languageCode, recentCurrencyCodes, recentLanguageCodes },
     referenceDate,
@@ -963,6 +1124,7 @@ export const importISaveMoneyPdfText = (text: string, referenceDate = new Date()
 
   return finalizeImportedState(
     months,
+    new Map<string, BankAccount>(),
     [],
     {
       appThemeId: 'sunrise',
@@ -991,7 +1153,7 @@ export const buildBudgetPdfHtml = (appState: BudgetAppState, month: MonthRecord)
   const progress = totalPlanned > 0 ? Math.round(clamp(totalSpent / totalPlanned) * 100) : 0;
   const projectedSpend = Math.round(getProjectedSpend(month));
   const topGoal = appState.goals[0];
-  const currencyCode = appState.preferences.currencyCode;
+  const currencyCode = month.currencyCode;
   const localeTag = getLocaleTag(appState.preferences.languageCode);
 
   const categoryRows = summaries

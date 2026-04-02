@@ -14,6 +14,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { doc, getDoc, getFirestore, setDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Platform } from 'react-native';
 import type { BudgetAppState } from './budgetModel';
 
@@ -37,8 +38,32 @@ export type BudgetAuthUser = {
   isAnonymous: boolean;
 };
 
+export type BudgetAiSuggestionRequest = {
+  averageMonthlySpend: number;
+  currencyCode: string;
+  localeTag: string;
+  monthCount: number;
+  months: Array<{
+    label: string;
+    planned: number;
+    spent: number;
+  }>;
+  overBudgetMonths: number;
+  topCategory: { name: string; spent: number } | null;
+  totalPlanned: number;
+  totalSpent: number;
+  trendDelta: number | null;
+  windowLabel: string;
+};
+
+export type BudgetAiSuggestionResponse = {
+  model: string;
+  suggestions: string[];
+};
+
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 const firestore = getFirestore(app);
+const functions = getFunctions(app, 'europe-west1');
 
 let authInstance: ReturnType<typeof getAuth> | null = null;
 
@@ -144,4 +169,33 @@ export const loadBudgetCloudState = async (userId: string): Promise<unknown | nu
 
 export const saveBudgetCloudState = async (userId: string, state: BudgetAppState) => {
   await setDoc(doc(firestore, 'users', userId, 'budget', 'app'), state, { merge: false });
+};
+
+export const getBudgetAiSuggestions = async (
+  payload: BudgetAiSuggestionRequest,
+): Promise<BudgetAiSuggestionResponse | null> => {
+  const callBudgetAiSuggestions = httpsCallable<
+    BudgetAiSuggestionRequest,
+    BudgetAiSuggestionResponse
+  >(functions, 'generateBudgetAiSuggestions');
+
+  try {
+    const result = await callBudgetAiSuggestions(payload);
+    const data = result.data;
+
+    if (
+      !data ||
+      !Array.isArray(data.suggestions) ||
+      data.suggestions.some((item) => typeof item !== 'string')
+    ) {
+      return null;
+    }
+
+    return {
+      model: typeof data.model === 'string' ? data.model : 'unknown',
+      suggestions: data.suggestions.slice(0, 3),
+    };
+  } catch {
+    return null;
+  }
 };

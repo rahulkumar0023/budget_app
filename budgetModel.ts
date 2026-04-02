@@ -4,6 +4,7 @@ export type CurrencyCode = string;
 export type LanguageCode = string;
 export type BudgetTone = 'good' | 'warning' | 'alert';
 export type MonthlyLimit = string;
+export type CategoryBucket = 'needs' | 'wants' | 'savings';
 
 export type AppTheme = {
   id: AppThemeId;
@@ -60,13 +61,25 @@ export type Category = {
   id: string;
   name: string;
   planned: number;
+  subcategories: string[];
+  bucket: CategoryBucket;
   themeId: ThemeId;
   recurring: boolean;
+};
+
+export type BankAccountKind = 'spending' | 'recurring' | 'savings' | 'investing';
+
+export type BankAccount = {
+  id: string;
+  name: string;
+  kinds: BankAccountKind[];
+  customKinds: string[];
 };
 
 export type Transaction = {
   id: string;
   categoryId: string;
+  accountId?: string;
   amount: number;
   note: string;
   happenedAt: string;
@@ -83,6 +96,7 @@ export type Goal = {
 
 export type MonthRecord = {
   id: string;
+  currencyCode: CurrencyCode;
   monthlyLimit: MonthlyLimit;
   categories: Category[];
   transactions: Transaction[];
@@ -98,9 +112,10 @@ export type AppPreferences = {
 };
 
 export type BudgetAppState = {
-  version: 3;
+  version: 4;
   activeMonthId: string;
   months: MonthRecord[];
+  accounts: BankAccount[];
   goals: Goal[];
   preferences: AppPreferences;
   updatedAt: number;
@@ -109,8 +124,57 @@ export type BudgetAppState = {
 export type QuickPreset = {
   name: string;
   planned: number;
+  bucket: CategoryBucket;
   themeId: ThemeId;
   recurring: boolean;
+};
+
+export const categoryBucketOrder: CategoryBucket[] = ['needs', 'wants', 'savings'];
+export const bankAccountKindOrder: BankAccountKind[] = ['spending', 'recurring', 'savings', 'investing'];
+export const bankAccountKindMeta: Record<
+  BankAccountKind,
+  {
+    label: string;
+    description: string;
+  }
+> = {
+  spending: {
+    label: 'Spending',
+    description: 'Day-to-day account for routine expenses and flexible spending.',
+  },
+  recurring: {
+    label: 'Recurring',
+    description: 'Main account used for rent, bills, subscriptions, and scheduled commitments.',
+  },
+  savings: {
+    label: 'Savings',
+    description: 'Savings or investing account used for transfers, pockets, and reserves.',
+  },
+  investing: {
+    label: 'Investing',
+    description: 'Brokerage or investment activity linked to this account.',
+  },
+};
+
+export const categoryBucketMeta: Record<
+  CategoryBucket,
+  {
+    label: string;
+    description: string;
+  }
+> = {
+  needs: {
+    label: 'Needs',
+    description: 'Rent, bills, groceries, transport, and other core spending.',
+  },
+  wants: {
+    label: 'Wants',
+    description: 'Lifestyle, subscriptions, dining, shopping, and flexible spend.',
+  },
+  savings: {
+    label: 'Savings',
+    description: 'Emergency fund, debt payoff, investing, and future goals.',
+  },
 };
 
 export type CategorySummary = {
@@ -556,11 +620,12 @@ export const categoryThemes: Record<
 export const themeCycle: ThemeId[] = ['citrus', 'apricot', 'clay', 'sun', 'ember'];
 
 export const quickPresets: QuickPreset[] = [
-  { name: 'Rent', planned: 850, themeId: 'clay', recurring: true },
-  { name: 'Groceries', planned: 500, themeId: 'citrus', recurring: true },
-  { name: 'Coffee', planned: 90, themeId: 'sun', recurring: false },
-  { name: 'Streaming', planned: 60, themeId: 'ember', recurring: true },
-  { name: 'Transport', planned: 140, themeId: 'apricot', recurring: true },
+  { name: 'Rent', planned: 850, bucket: 'needs', themeId: 'clay', recurring: true },
+  { name: 'Groceries', planned: 500, bucket: 'needs', themeId: 'citrus', recurring: true },
+  { name: 'Bills', planned: 180, bucket: 'needs', themeId: 'apricot', recurring: true },
+  { name: 'Coffee', planned: 90, bucket: 'wants', themeId: 'sun', recurring: false },
+  { name: 'Streaming', planned: 60, bucket: 'wants', themeId: 'ember', recurring: true },
+  { name: 'Transport', planned: 140, bucket: 'needs', themeId: 'apricot', recurring: true },
 ];
 
 type LegacyBudget = {
@@ -579,6 +644,15 @@ type LegacyDashboardState = {
 
 type VersionTwoBudgetAppState = {
   version: 2;
+  activeMonthId?: unknown;
+  months?: unknown;
+  goals?: unknown;
+  preferences?: unknown;
+  updatedAt?: unknown;
+};
+
+type VersionThreeBudgetAppState = {
+  version: 3;
   activeMonthId?: unknown;
   months?: unknown;
   goals?: unknown;
@@ -776,11 +850,102 @@ export const inferThemeId = (name: string, index: number): ThemeId => {
 export const inferRecurring = (name: string) =>
   /(rent|mortgage|subscription|stream|phone|insurance|gym|transport|grocer)/i.test(name);
 
+export const inferCategoryBucket = (name: string): CategoryBucket => {
+  const normalized = name.trim().toLowerCase();
+
+  if (/(save|saving|emergency|invest|retire|deposit|debt|loan|holiday fund|vacation fund)/.test(normalized)) {
+    return 'savings';
+  }
+
+  if (/(rent|mortgage|home|household|living|utilities|grocer|food|market|transport|fuel|car|doctor|health|supplement|vitamin|medicine|pharmacy|insurance|bill|phone|internet|childcare|school|cleaning|pet care)/.test(normalized)) {
+    return 'needs';
+  }
+
+  return 'wants';
+};
+
+export const parseSubcategoryInput = (value: unknown) => {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[,\n;|/]+/)
+      : [];
+  const uniqueValues = new Set<string>();
+
+  rawValues.forEach((item) => {
+    if (typeof item !== 'string') {
+      return;
+    }
+
+    const normalized = item.replace(/\s+/g, ' ').trim();
+    if (normalized) {
+      uniqueValues.add(normalized);
+    }
+  });
+
+  return [...uniqueValues].slice(0, 10);
+};
+
 const normalizeThemeId = (value: unknown, fallback: ThemeId): ThemeId =>
   typeof value === 'string' && themeCycle.includes(value as ThemeId) ? (value as ThemeId) : fallback;
 
 const normalizeAppThemeId = (value: unknown, fallback: AppThemeId = 'sunrise'): AppThemeId =>
   typeof value === 'string' && value in appThemes ? (value as AppThemeId) : fallback;
+
+export const normalizeBankAccountKind = (
+  value: unknown,
+  fallback: BankAccountKind = 'spending',
+): BankAccountKind =>
+  typeof value === 'string' && bankAccountKindOrder.includes(value as BankAccountKind)
+    ? (value as BankAccountKind)
+    : fallback;
+
+export const normalizeBankAccountKinds = (
+  value: unknown,
+  fallback: BankAccountKind[] = ['spending'],
+) => {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[,\n;|/]+/)
+      : [];
+  const uniqueValues = new Set<BankAccountKind>();
+
+  rawValues.forEach((item) => {
+    const normalized = normalizeBankAccountKind(item, '' as BankAccountKind);
+    if (normalized && bankAccountKindOrder.includes(normalized)) {
+      uniqueValues.add(normalized);
+    }
+  });
+
+  if (uniqueValues.size > 0) {
+    return bankAccountKindOrder.filter((kind) => uniqueValues.has(kind));
+  }
+
+  return fallback;
+};
+
+export const parseBankAccountCustomKinds = (value: unknown) => {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[,\n;|/]+/)
+      : [];
+  const uniqueValues = new Set<string>();
+
+  rawValues.forEach((item) => {
+    if (typeof item !== 'string') {
+      return;
+    }
+
+    const normalized = item.replace(/\s+/g, ' ').trim();
+    if (normalized) {
+      uniqueValues.add(normalized);
+    }
+  });
+
+  return [...uniqueValues].slice(0, 8);
+};
 
 const normalizePreferences = (value: unknown): AppPreferences => {
   if (!isRecord(value)) {
@@ -802,6 +967,29 @@ const normalizePreferences = (value: unknown): AppPreferences => {
   };
 };
 
+const normalizeBankAccount = (value: unknown, index: number): BankAccount | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  const customKinds = parseBankAccountCustomKinds(value.customKinds ?? value.customTags ?? value.tags);
+
+  if (!name) {
+    return null;
+  }
+
+  return {
+    id: typeof value.id === 'string' && value.id ? value.id : createId(`acct-${index}`),
+    name,
+    kinds: normalizeBankAccountKinds(
+      value.kinds ?? value.kind,
+      customKinds.length > 0 ? [] : [normalizeBankAccountKind(value.kind)],
+    ),
+    customKinds,
+  };
+};
+
 const normalizeCategory = (value: unknown, index: number): Category | null => {
   if (!isRecord(value)) {
     return null;
@@ -818,6 +1006,12 @@ const normalizeCategory = (value: unknown, index: number): Category | null => {
     id: typeof value.id === 'string' && value.id ? value.id : createId('cat'),
     name,
     planned,
+    subcategories: parseSubcategoryInput(value.subcategories),
+    bucket:
+      typeof value.bucket === 'string' &&
+      categoryBucketOrder.includes(value.bucket as CategoryBucket)
+        ? (value.bucket as CategoryBucket)
+        : inferCategoryBucket(name),
     themeId: normalizeThemeId(value.themeId, inferThemeId(name, index)),
     recurring:
       typeof value.recurring === 'boolean' ? value.recurring : inferRecurring(name),
@@ -840,6 +1034,7 @@ const normalizeTransaction = (value: unknown): Transaction | null => {
   return {
     id: typeof value.id === 'string' && value.id ? value.id : createId('txn'),
     categoryId,
+    accountId: typeof value.accountId === 'string' && value.accountId ? value.accountId : undefined,
     amount,
     note: typeof value.note === 'string' ? value.note : '',
     happenedAt,
@@ -869,7 +1064,10 @@ const normalizeGoal = (value: unknown, index: number): Goal | null => {
   };
 };
 
-const normalizeMonthRecord = (value: unknown): MonthRecord | null => {
+const normalizeMonthRecord = (
+  value: unknown,
+  fallbackCurrencyCode: CurrencyCode = defaultCurrencyCode,
+): MonthRecord | null => {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.monthlyLimit !== 'string') {
     return null;
   }
@@ -888,6 +1086,7 @@ const normalizeMonthRecord = (value: unknown): MonthRecord | null => {
 
   return {
     id: value.id,
+    currencyCode: normalizeCurrencyCode(value.currencyCode, fallbackCurrencyCode),
     monthlyLimit: value.monthlyLimit,
     categories,
     transactions,
@@ -908,8 +1107,13 @@ export const buildIsoDateForMonth = (monthId: string, day: number) => {
   ).toISOString();
 };
 
-export const createEmptyMonth = (monthId: string, monthlyLimit: MonthlyLimit = '0'): MonthRecord => ({
+export const createEmptyMonth = (
+  monthId: string,
+  monthlyLimit: MonthlyLimit = '0',
+  currencyCode: CurrencyCode = defaultCurrencyCode,
+): MonthRecord => ({
   id: monthId,
+  currencyCode,
   monthlyLimit,
   categories: [],
   transactions: [],
@@ -918,6 +1122,7 @@ export const createEmptyMonth = (monthId: string, monthlyLimit: MonthlyLimit = '
 
 export const copyMonthBudget = (sourceMonth: MonthRecord, targetMonthId: string): MonthRecord => ({
   id: targetMonthId,
+  currencyCode: sourceMonth.currencyCode,
   monthlyLimit: sourceMonth.monthlyLimit,
   categories: sourceMonth.categories.map((category) => ({
     ...category,
@@ -931,9 +1136,10 @@ export const createInitialBudgetState = (referenceDate = new Date()): BudgetAppS
   const monthId = getMonthId(referenceDate);
 
   return {
-    version: 3,
+    version: 4,
     activeMonthId: monthId,
     months: [createEmptyMonth(monthId)],
+    accounts: [],
     goals: [],
     preferences: {
       appThemeId: 'sunrise',
@@ -991,6 +1197,7 @@ export const rollMonthForward = (sourceMonth: MonthRecord, targetMonthId: string
 
   return {
     id: targetMonthId,
+    currencyCode: sourceMonth.currencyCode,
     monthlyLimit: sourceMonth.monthlyLimit,
     categories,
     transactions,
@@ -1006,7 +1213,7 @@ export const ensureCurrentMonth = (
   const months = [...inputState.months].sort((left, right) => compareMonthIds(left.id, right.id));
 
   if (months.length === 0) {
-    const starter = createEmptyMonth(currentMonthId);
+    const starter = createEmptyMonth(currentMonthId, '0', inputState.preferences.currencyCode);
 
     return {
       ...inputState,
@@ -1085,17 +1292,19 @@ export const migrateLegacyDashboardState = (
     .filter((transaction): transaction is Transaction => transaction !== null);
 
   return {
-    version: 3,
+    version: 4,
     activeMonthId: monthId,
     months: [
       {
         id: monthId,
+        currencyCode: defaultCurrencyCode,
         monthlyLimit: typeof legacy.monthlyLimit === 'string' ? legacy.monthlyLimit : '1500',
         categories,
         transactions,
         updatedAt: toFiniteNumber(legacy.updatedAt, Date.now()),
       },
     ],
+    accounts: [],
     goals: [],
     preferences: {
       appThemeId: 'sunrise',
@@ -1116,13 +1325,18 @@ export const normalizeBudgetAppState = (
     return migrateLegacyDashboardState(value, referenceDate);
   }
 
-  if (value.version !== 2 && value.version !== 3) {
+  if (value.version !== 2 && value.version !== 3 && value.version !== 4) {
     return migrateLegacyDashboardState(value, referenceDate);
   }
 
+  const preferences =
+    value.version === 3 || value.version === 4
+      ? normalizePreferences(value.preferences)
+      : normalizePreferences((value as VersionTwoBudgetAppState | VersionThreeBudgetAppState).preferences);
+
   const months = Array.isArray(value.months)
     ? value.months
-        .map((month) => normalizeMonthRecord(month))
+        .map((month) => normalizeMonthRecord(month, preferences.currencyCode))
         .filter((month): month is MonthRecord => month !== null)
     : [];
 
@@ -1132,15 +1346,19 @@ export const normalizeBudgetAppState = (
         .filter((goal): goal is Goal => goal !== null)
     : [];
 
+  const accounts = Array.isArray(value.accounts)
+    ? value.accounts
+        .map((account, index) => normalizeBankAccount(account, index))
+        .filter((account): account is BankAccount => account !== null)
+    : [];
+
   const state: BudgetAppState = {
-    version: 3,
+    version: 4,
     activeMonthId: typeof value.activeMonthId === 'string' ? value.activeMonthId : getMonthId(referenceDate),
     months,
+    accounts,
     goals,
-    preferences:
-      value.version === 3
-        ? normalizePreferences(value.preferences)
-        : normalizePreferences((value as VersionTwoBudgetAppState).preferences),
+    preferences,
     updatedAt: toFiniteNumber(value.updatedAt, Date.now()),
   };
 
@@ -1223,6 +1441,38 @@ export const getTopCategory = (summaries: CategorySummary[]) =>
     null,
   );
 
+export const getPaceDrivenSpend = (month: MonthRecord) =>
+  month.transactions
+    .filter((transaction) => !transaction.recurring)
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+
+export const getProjectedCategorySpend = (
+  month: MonthRecord,
+  category: Category,
+  referenceDate = new Date(),
+) => {
+  const transactions = month.transactions.filter((transaction) => transaction.categoryId === category.id);
+  const spent = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
+  const currentMonthId = getMonthId(referenceDate);
+
+  if (month.id !== currentMonthId) {
+    return spent;
+  }
+
+  const elapsedDays = Math.max(getDayOfMonth(referenceDate), 1);
+  const recurringSpent = transactions
+    .filter((transaction) => transaction.recurring)
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const variableSpent = transactions
+    .filter((transaction) => !transaction.recurring)
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const variableProjectedSpend =
+    elapsedDays > 0 ? (variableSpent / elapsedDays) * getDaysInMonth(month.id) : 0;
+  const recurringBaseline = category.recurring ? category.planned : 0;
+
+  return Math.max(spent, recurringBaseline, recurringSpent + variableProjectedSpend);
+};
+
 export const getProjectedSpend = (month: MonthRecord, referenceDate = new Date()) => {
   const currentMonthId = getMonthId(referenceDate);
   const totalSpent = getTotalSpent(month);
@@ -1231,8 +1481,10 @@ export const getProjectedSpend = (month: MonthRecord, referenceDate = new Date()
     return totalSpent;
   }
 
-  const elapsedDays = Math.max(getDayOfMonth(referenceDate), 1);
-  return (totalSpent / elapsedDays) * getDaysInMonth(month.id);
+  return month.categories.reduce(
+    (sum, category) => sum + getProjectedCategorySpend(month, category, referenceDate),
+    0,
+  );
 };
 
 export const formatTransactionDate = (happenedAt: string, locale = getLocaleTag()) =>

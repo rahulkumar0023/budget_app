@@ -39,9 +39,22 @@ export type BudgetAuthUser = {
 };
 
 export type BudgetAiSuggestionRequest = {
+  adjustableCategories: Array<{
+    bucket: string;
+    left: number;
+    name: string;
+    planned: number;
+    spent: number;
+    tone: string;
+  }>;
+  adjustableCategoryCount: number;
+  adjustableSpent: number;
   categoryCount: number;
   currencyCode: string;
   flexibleSpent: number;
+  fixedCategoryCount: number;
+  fixedShareRatio: number;
+  flexibleCategoryCount: number;
   historyMonths: Array<{
     currencyCode: string;
     fixedShareRatio: number;
@@ -50,11 +63,13 @@ export type BudgetAiSuggestionRequest = {
     spent: number;
     utilizationRatio: number;
   }>;
+  historyMixedCurrency: boolean;
   localeTag: string;
   monthId: string;
   monthLabel: string;
   monthlyLimit: number;
   overBudgetCategoryCount: number;
+  planUsageRatio: number;
   recurringPlanned: number;
   recurringSpent: number;
   remaining: number;
@@ -83,6 +98,133 @@ export type BudgetAiSuggestionResponse = {
 };
 
 export type BudgetAiMonthlyReviewResponse = BudgetAiSuggestionResponse;
+
+export type BudgetAiExpenseAssistRequest = {
+  accounts: Array<{
+    customKinds: string[];
+    id: string;
+    kinds: string[];
+    name: string;
+  }>;
+  amount: number;
+  categories: Array<{
+    bucket: string;
+    id: string;
+    name: string;
+    recurring: boolean;
+    subcategories: string[];
+  }>;
+  currencyCode: string;
+  localeTag: string;
+  monthId: string;
+  monthLabel: string;
+  note: string;
+  recentTransactions: Array<{
+    accountName: string;
+    amount: number;
+    categoryName: string;
+    note: string;
+    recurring: boolean;
+  }>;
+};
+
+export type BudgetAiExpenseAssistResponse = {
+  accountId: string | null;
+  categoryId: string;
+  model: string;
+  reason: string;
+  recurring: boolean;
+  subcategoryHint: string;
+};
+
+export type BudgetAiImportCleanupRequest = {
+  accounts: Array<{
+    customKinds: string[];
+    kinds: string[];
+    name: string;
+    usageCount: number;
+  }>;
+  activeMonthId: string;
+  activeMonthLabel: string;
+  categories: Array<{
+    averagePlanned: number;
+    bucket: string;
+    monthsUsed: number;
+    name: string;
+    recurringMonths: number;
+    subcategories: string[];
+  }>;
+  currencyCode: string;
+  historyMixedCurrency: boolean;
+  localeTag: string;
+  months: Array<{
+    categoryCount: number;
+    currencyCode: string;
+    label: string;
+    planUsageRatio: number;
+    recurringShareRatio: number;
+    transactionCount: number;
+  }>;
+};
+
+export type BudgetAiImportCleanupResponse = {
+  actions: string[];
+  headline: string;
+  mergeSuggestions: Array<{
+    from: string;
+    reason: string;
+    to: string;
+  }>;
+  model: string;
+  summary: string;
+  watchout: string;
+};
+
+export type BudgetAiMonthPlannerRequest = {
+  currencyCode: string;
+  currentCategories: Array<{
+    bucket: string;
+    name: string;
+    planned: number;
+    recurring: boolean;
+    subcategories: string[];
+  }>;
+  currentCategoryCount: number;
+  historyCategories: Array<{
+    averagePlanned: number;
+    bucket: string;
+    lastPlanned: number;
+    monthsSeen: number;
+    name: string;
+    recurring: boolean;
+    subcategories: string[];
+  }>;
+  localeTag: string;
+  monthId: string;
+  monthLabel: string;
+  monthlyLimit: number;
+};
+
+export type BudgetAiMonthPlannerResponse = {
+  actions: string[];
+  headline: string;
+  model: string;
+  suggestedCategories: Array<{
+    bucket: string;
+    name: string;
+    planned: number;
+    reason: string;
+    recurring: boolean;
+    subcategories: string[];
+  }>;
+  summary: string;
+  watchout: string;
+};
+
+const readTrimmedString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
 
 export const getBudgetAiMonthlyReview = async (
   payload: BudgetAiMonthlyReviewRequest,
@@ -123,6 +265,147 @@ export const getBudgetAiSuggestions = async (
   payload: BudgetAiSuggestionRequest,
 ): Promise<BudgetAiSuggestionResponse | null> => {
   return getBudgetAiMonthlyReview(payload);
+};
+
+export const getBudgetAiExpenseAssist = async (
+  payload: BudgetAiExpenseAssistRequest,
+): Promise<BudgetAiExpenseAssistResponse | null> => {
+  const callBudgetAiExpenseAssist = httpsCallable<
+    BudgetAiExpenseAssistRequest,
+    BudgetAiExpenseAssistResponse
+  >(functions, 'generateBudgetAiExpenseAssist');
+
+  try {
+    const result = await callBudgetAiExpenseAssist(payload);
+    const data = result.data;
+    const categoryIds = new Set(payload.categories.map((category) => category.id));
+    const accountIds = new Set(payload.accounts.map((account) => account.id));
+    const categoryId = readTrimmedString(data?.categoryId);
+    const accountId = readTrimmedString(data?.accountId);
+
+    if (
+      !categoryIds.has(categoryId) ||
+      typeof data?.recurring !== 'boolean' ||
+      typeof data?.reason !== 'string'
+    ) {
+      return null;
+    }
+
+    return {
+      accountId: accountIds.has(accountId) ? accountId : null,
+      categoryId,
+      model: readTrimmedString(data?.model) || 'unknown',
+      reason: data.reason.trim(),
+      recurring: data.recurring,
+      subcategoryHint: readTrimmedString(data?.subcategoryHint),
+    };
+  } catch {
+    return null;
+  }
+};
+
+export const getBudgetAiImportCleanup = async (
+  payload: BudgetAiImportCleanupRequest,
+): Promise<BudgetAiImportCleanupResponse | null> => {
+  const callBudgetAiImportCleanup = httpsCallable<
+    BudgetAiImportCleanupRequest,
+    BudgetAiImportCleanupResponse
+  >(functions, 'generateBudgetAiImportCleanup');
+
+  try {
+    const result = await callBudgetAiImportCleanup(payload);
+    const data = result.data;
+
+    if (
+      !data ||
+      typeof data.headline !== 'string' ||
+      typeof data.summary !== 'string' ||
+      typeof data.watchout !== 'string' ||
+      !Array.isArray(data.actions) ||
+      data.actions.some((item) => typeof item !== 'string') ||
+      !Array.isArray(data.mergeSuggestions)
+    ) {
+      return null;
+    }
+
+    return {
+      actions: data.actions.slice(0, 3),
+      headline: data.headline.trim(),
+      mergeSuggestions: data.mergeSuggestions
+        .map((item) => ({
+          from: readTrimmedString(item?.from),
+          reason: readTrimmedString(item?.reason),
+          to: readTrimmedString(item?.to),
+        }))
+        .filter((item) => item.from && item.to && item.reason)
+        .slice(0, 3),
+      model: readTrimmedString(data.model) || 'unknown',
+      summary: data.summary.trim(),
+      watchout: data.watchout.trim(),
+    };
+  } catch {
+    return null;
+  }
+};
+
+export const getBudgetAiMonthPlanner = async (
+  payload: BudgetAiMonthPlannerRequest,
+): Promise<BudgetAiMonthPlannerResponse | null> => {
+  const callBudgetAiMonthPlanner = httpsCallable<
+    BudgetAiMonthPlannerRequest,
+    BudgetAiMonthPlannerResponse
+  >(functions, 'generateBudgetAiMonthPlanner');
+
+  try {
+    const result = await callBudgetAiMonthPlanner(payload);
+    const data = result.data;
+
+    if (
+      !data ||
+      typeof data.headline !== 'string' ||
+      typeof data.summary !== 'string' ||
+      typeof data.watchout !== 'string' ||
+      !Array.isArray(data.actions) ||
+      data.actions.some((item) => typeof item !== 'string') ||
+      !Array.isArray(data.suggestedCategories)
+    ) {
+      return null;
+    }
+
+    return {
+      actions: data.actions.slice(0, 3),
+      headline: data.headline.trim(),
+      model: readTrimmedString(data.model) || 'unknown',
+      suggestedCategories: data.suggestedCategories
+        .map((item) => ({
+          bucket: readTrimmedString(item?.bucket) || 'wants',
+          name: readTrimmedString(item?.name),
+          planned:
+            typeof item?.planned === 'number'
+              ? item.planned
+              : Number.isFinite(Number(item?.planned))
+                ? Number(item?.planned)
+                : 0,
+          reason: readTrimmedString(item?.reason),
+          recurring: Boolean(item?.recurring),
+          subcategories: isStringArray(item?.subcategories)
+            ? item.subcategories.map((entry) => entry.trim()).filter(Boolean).slice(0, 4)
+            : [],
+        }))
+        .filter(
+          (item) =>
+            item.name &&
+            Number.isFinite(item.planned) &&
+            item.planned > 0 &&
+            ['needs', 'wants', 'savings'].includes(item.bucket),
+        )
+        .slice(0, 5),
+      summary: data.summary.trim(),
+      watchout: data.watchout.trim(),
+    };
+  } catch {
+    return null;
+  }
 };
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);

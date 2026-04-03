@@ -99,6 +99,9 @@ import {
 } from './dataTransfer';
 import {
   createBudgetPasswordAccount,
+  getBudgetAiExpenseAssist,
+  getBudgetAiImportCleanup,
+  getBudgetAiMonthPlanner,
   ensureBudgetCloudUser,
   getBudgetAiMonthlyReview,
   loadBudgetCloudState,
@@ -106,6 +109,9 @@ import {
   signInBudgetPasswordUser,
   signOutBudgetUser,
   subscribeToBudgetAuth,
+  type BudgetAiExpenseAssistResponse,
+  type BudgetAiImportCleanupResponse,
+  type BudgetAiMonthPlannerResponse,
   type BudgetAiMonthlyReviewResponse,
   type BudgetAuthUser,
 } from './firebaseClient';
@@ -144,6 +150,18 @@ type InsightSuggestion = {
 };
 
 type MonthlyAiReview = BudgetAiMonthlyReviewResponse & {
+  generatedAt: number;
+};
+
+type ExpenseAiAssist = BudgetAiExpenseAssistResponse & {
+  generatedAt: number;
+};
+
+type ImportCleanupReview = BudgetAiImportCleanupResponse & {
+  generatedAt: number;
+};
+
+type MonthPlannerReview = BudgetAiMonthPlannerResponse & {
   generatedAt: number;
 };
 
@@ -1141,6 +1159,19 @@ export default function App() {
   const [aiReviewByMonthId, setAiReviewByMonthId] = useState<Record<string, MonthlyAiReview>>({});
   const [aiReviewBusyMonthId, setAiReviewBusyMonthId] = useState<string | null>(null);
   const [aiReviewErrorByMonthId, setAiReviewErrorByMonthId] = useState<Record<string, string>>({});
+  const [expenseAiSuggestion, setExpenseAiSuggestion] = useState<ExpenseAiAssist | null>(null);
+  const [expenseAiBusy, setExpenseAiBusy] = useState(false);
+  const [expenseAiError, setExpenseAiError] = useState('');
+  const [importCleanupReview, setImportCleanupReview] = useState<ImportCleanupReview | null>(null);
+  const [importCleanupBusy, setImportCleanupBusy] = useState(false);
+  const [importCleanupError, setImportCleanupError] = useState('');
+  const [monthPlannerByMonthId, setMonthPlannerByMonthId] = useState<
+    Record<string, MonthPlannerReview>
+  >({});
+  const [monthPlannerBusyMonthId, setMonthPlannerBusyMonthId] = useState<string | null>(null);
+  const [monthPlannerErrorByMonthId, setMonthPlannerErrorByMonthId] = useState<
+    Record<string, string>
+  >({});
   const [planSetupStep, setPlanSetupStep] = useState<BudgetSetupStep>('limit');
   const [showPlanCategoryList, setShowPlanCategoryList] = useState(false);
   const [showAllPlanCategories, setShowAllPlanCategories] = useState(false);
@@ -1658,17 +1689,54 @@ export default function App() {
         }),
     [activeMonth.id, localeTag, sortedMonths],
   );
+  const aiReviewAdjustableCategories = useMemo(
+    () =>
+      [...categorySummaries]
+        .filter((summary) => !summary.category.recurring && summary.category.bucket !== 'savings')
+        .sort(
+          (left, right) =>
+            right.spent - left.spent || right.category.planned - left.category.planned,
+        )
+        .slice(0, 5)
+        .map((summary) => ({
+          bucket: summary.category.bucket,
+          left: summary.left,
+          name: summary.category.name,
+          planned: summary.category.planned,
+          spent: summary.spent,
+          tone: summary.tone,
+        })),
+    [categorySummaries],
+  );
   const aiReviewPayload = useMemo(
     () => ({
+      adjustableCategories: aiReviewAdjustableCategories,
+      adjustableCategoryCount: activeMonth.categories.filter(
+        (category) => !category.recurring && category.bucket !== 'savings',
+      ).length,
+      adjustableSpent: categorySummaries
+        .filter((summary) => !summary.category.recurring && summary.category.bucket !== 'savings')
+        .reduce(
+          (sum, summary) => sum + summary.spent,
+          0,
+        ),
       categoryCount: activeMonth.categories.length,
       currencyCode: activeMonth.currencyCode,
       flexibleSpent,
+      fixedCategoryCount: activeMonth.categories.filter((category) => category.recurring).length,
+      fixedShareRatio: totalSpent > 0 ? recurringSpent / totalSpent : 0,
+      flexibleCategoryCount: activeMonth.categories.filter((category) => !category.recurring).length,
       historyMonths: aiReviewHistoryMonths,
+      historyMixedCurrency: new Set(aiReviewHistoryMonths.map((month) => month.currencyCode)).size > 1,
       localeTag,
       monthId: activeMonth.id,
       monthLabel: getMonthLabel(activeMonth.id, localeTag),
       monthlyLimit: monthlyLimitNumber,
       overBudgetCategoryCount: categorySummaries.filter((summary) => summary.left < 0).length,
+      planUsageRatio:
+        (monthlyLimitNumber > 0 ? monthlyLimitNumber : totalPlanned) > 0
+          ? totalSpent / (monthlyLimitNumber > 0 ? monthlyLimitNumber : totalPlanned)
+          : 0,
       recurringPlanned,
       recurringSpent,
       remaining: (monthlyLimitNumber > 0 ? monthlyLimitNumber : totalPlanned) - totalSpent,
@@ -1692,6 +1760,7 @@ export default function App() {
       totalSpent,
     }),
     [
+      aiReviewAdjustableCategories,
       activeMonth.categories.length,
       activeMonth.currencyCode,
       activeMonth.id,
@@ -1703,10 +1772,248 @@ export default function App() {
       recurringPlanned,
       recurringSpent,
       savingsBucketSummary?.planned,
-      totalPlanned,
       totalSpent,
+      totalPlanned,
     ],
   );
+  const expenseAiAssistPayload = useMemo(() => {
+    const categoryById = new Map(activeMonth.categories.map((category) => [category.id, category]));
+
+    return {
+      accounts: bankAccounts.map((account) => ({
+        customKinds: account.customKinds,
+        id: account.id,
+        kinds: account.kinds,
+        name: account.name,
+      })),
+      amount: Number(expenseAmount) || 0,
+      categories: activeMonth.categories.map((category) => ({
+        bucket: category.bucket,
+        id: category.id,
+        name: category.name,
+        recurring: category.recurring,
+        subcategories: category.subcategories,
+      })),
+      currencyCode: activeMonth.currencyCode,
+      localeTag,
+      monthId: activeMonth.id,
+      monthLabel: getMonthLabel(activeMonth.id, localeTag),
+      note: expenseNote.trim(),
+      recentTransactions: [...activeMonth.transactions]
+        .sort(
+          (left, right) =>
+            new Date(right.happenedAt).getTime() - new Date(left.happenedAt).getTime(),
+        )
+        .slice(0, 12)
+        .map((transaction) => ({
+          accountName: transaction.accountId ? accountMap.get(transaction.accountId)?.name ?? '' : '',
+          amount: transaction.amount,
+          categoryName: categoryById.get(transaction.categoryId)?.name ?? '',
+          note: transaction.note,
+          recurring: transaction.recurring,
+        })),
+    };
+  }, [
+    activeMonth.categories,
+    activeMonth.currencyCode,
+    activeMonth.id,
+    activeMonth.transactions,
+    accountMap,
+    bankAccounts,
+    expenseAmount,
+    expenseNote,
+    localeTag,
+  ]);
+  const aiPlannerHistoryCategories = useMemo(() => {
+    const aggregates = new Map<
+      string,
+      {
+        averagePlannedTotal: number;
+        bucket: CategoryBucket;
+        lastMonthId: string;
+        lastPlanned: number;
+        monthsSeen: number;
+        name: string;
+        recurringCount: number;
+        subcategories: Set<string>;
+      }
+    >();
+
+    sortedMonths
+      .filter((month) => compareMonthIds(month.id, activeMonth.id) < 0)
+      .slice(0, 6)
+      .forEach((month) => {
+        month.categories.forEach((category) => {
+          const key = category.name.trim().toLowerCase();
+
+          if (!key) {
+            return;
+          }
+
+          const existing = aggregates.get(key);
+
+          if (existing) {
+            existing.averagePlannedTotal += category.planned;
+            existing.monthsSeen += 1;
+            existing.recurringCount += Number(category.recurring);
+            category.subcategories.forEach((subCategory) => existing.subcategories.add(subCategory));
+
+            if (compareMonthIds(month.id, existing.lastMonthId) > 0) {
+              existing.lastMonthId = month.id;
+              existing.lastPlanned = category.planned;
+              existing.bucket = category.bucket;
+            }
+
+            return;
+          }
+
+          aggregates.set(key, {
+            averagePlannedTotal: category.planned,
+            bucket: category.bucket,
+            lastMonthId: month.id,
+            lastPlanned: category.planned,
+            monthsSeen: 1,
+            name: category.name,
+            recurringCount: Number(category.recurring),
+            subcategories: new Set(category.subcategories),
+          });
+        });
+      });
+
+    return [...aggregates.values()]
+      .map((entry) => ({
+        averagePlanned: entry.averagePlannedTotal / Math.max(entry.monthsSeen, 1),
+        bucket: entry.bucket,
+        lastPlanned: entry.lastPlanned,
+        monthsSeen: entry.monthsSeen,
+        name: entry.name,
+        recurring: entry.recurringCount >= Math.max(1, Math.ceil(entry.monthsSeen / 2)),
+        subcategories: [...entry.subcategories].slice(0, 6),
+      }))
+      .sort(
+        (left, right) =>
+          right.monthsSeen - left.monthsSeen ||
+          Number(right.recurring) - Number(left.recurring) ||
+          right.lastPlanned - left.lastPlanned,
+      )
+      .slice(0, 12);
+  }, [activeMonth.id, sortedMonths]);
+  const aiMonthPlannerPayload = useMemo(
+    () => ({
+      currencyCode: activeMonth.currencyCode,
+      currentCategories: activeMonth.categories.map((category) => ({
+        bucket: category.bucket,
+        name: category.name,
+        planned: category.planned,
+        recurring: category.recurring,
+        subcategories: category.subcategories,
+      })),
+      currentCategoryCount: activeMonth.categories.length,
+      historyCategories: aiPlannerHistoryCategories,
+      localeTag,
+      monthId: activeMonth.id,
+      monthLabel: getMonthLabel(activeMonth.id, localeTag),
+      monthlyLimit: monthlyLimitNumber,
+    }),
+    [
+      activeMonth.categories,
+      activeMonth.currencyCode,
+      activeMonth.id,
+      aiPlannerHistoryCategories,
+      localeTag,
+      monthlyLimitNumber,
+    ],
+  );
+  const aiImportCleanupPayload = useMemo(() => {
+    const categoryAggregates = new Map<
+      string,
+      {
+        averagePlannedTotal: number;
+        bucket: CategoryBucket;
+        monthsUsed: Set<string>;
+        name: string;
+        recurringMonths: number;
+        subcategories: Set<string>;
+      }
+    >();
+
+    sortedMonths.forEach((month) => {
+      month.categories.forEach((category) => {
+        const key = category.name.trim().toLowerCase();
+
+        if (!key) {
+          return;
+        }
+
+        const existing = categoryAggregates.get(key);
+
+        if (existing) {
+          existing.averagePlannedTotal += category.planned;
+          existing.monthsUsed.add(month.id);
+          existing.recurringMonths += Number(category.recurring);
+          category.subcategories.forEach((subCategory) => existing.subcategories.add(subCategory));
+          return;
+        }
+
+        categoryAggregates.set(key, {
+          averagePlannedTotal: category.planned,
+          bucket: category.bucket,
+          monthsUsed: new Set([month.id]),
+          name: category.name,
+          recurringMonths: Number(category.recurring),
+          subcategories: new Set(category.subcategories),
+        });
+      });
+    });
+
+    return {
+      accounts: bankAccounts.map((account) => ({
+        customKinds: account.customKinds,
+        kinds: account.kinds,
+        name: account.name,
+        usageCount: accountUsageCounts.get(account.id) ?? 0,
+      })),
+      activeMonthId: activeMonth.id,
+      activeMonthLabel: getMonthLabel(activeMonth.id, localeTag),
+      categories: [...categoryAggregates.values()]
+        .map((entry) => ({
+          averagePlanned: entry.averagePlannedTotal / Math.max(entry.monthsUsed.size, 1),
+          bucket: entry.bucket,
+          monthsUsed: entry.monthsUsed.size,
+          name: entry.name,
+          recurringMonths: entry.recurringMonths,
+          subcategories: [...entry.subcategories].slice(0, 6),
+        }))
+        .sort((left, right) => right.monthsUsed - left.monthsUsed || right.averagePlanned - left.averagePlanned)
+        .slice(0, 16),
+      currencyCode: activeMonth.currencyCode,
+      historyMixedCurrency: new Set(sortedMonths.map((month) => month.currencyCode)).size > 1,
+      localeTag,
+      months: sortedMonths.slice(0, 6).map((month) => {
+        const monthSpent = getTotalSpent(month);
+        const monthRecurringSpent = month.transactions
+          .filter((transaction) => transaction.recurring)
+          .reduce((sum, transaction) => sum + transaction.amount, 0);
+        const monthPlanned = getTotalPlanned(month);
+
+        return {
+          categoryCount: month.categories.length,
+          currencyCode: month.currencyCode,
+          label: getMonthLabel(month.id, localeTag),
+          planUsageRatio: monthPlanned > 0 ? monthSpent / monthPlanned : 0,
+          recurringShareRatio: monthSpent > 0 ? monthRecurringSpent / monthSpent : 0,
+          transactionCount: month.transactions.length,
+        };
+      }),
+    };
+  }, [
+    accountUsageCounts,
+    activeMonth.currencyCode,
+    activeMonth.id,
+    bankAccounts,
+    localeTag,
+    sortedMonths,
+  ]);
   const insightMonths = useMemo(() => {
     const windowSize = insightWindowMeta[insightWindow].months;
     const monthsUpToActive = sortedMonths.filter((month) => compareMonthIds(month.id, activeMonth.id) <= 0);
@@ -1784,6 +2091,15 @@ export default function App() {
         minute: '2-digit',
       }).format(new Date(activeAiReview.generatedAt))
     : '';
+  const activeMonthPlanner = monthPlannerByMonthId[activeMonth.id] ?? null;
+  const activeMonthPlannerError = monthPlannerErrorByMonthId[activeMonth.id] ?? '';
+  const monthPlannerBusy = monthPlannerBusyMonthId === activeMonth.id;
+  const expenseAiSuggestedCategory =
+    expenseAiSuggestion?.categoryId
+      ? activeMonth.categories.find((category) => category.id === expenseAiSuggestion.categoryId) ?? null
+      : null;
+  const expenseAiSuggestedAccount =
+    expenseAiSuggestion?.accountId ? accountMap.get(expenseAiSuggestion.accountId) ?? null : null;
 
   const categoryToneById = useMemo(
     () =>
@@ -2123,6 +2439,9 @@ export default function App() {
     setExpenseAccountId(bankAccounts[0]?.id ?? '');
     setExpenseDate(getDefaultExpenseDate(activeMonth?.id ?? getMonthId(new Date())));
     setExpenseRecurring(false);
+    setExpenseAiSuggestion(null);
+    setExpenseAiError('');
+    setExpenseAiBusy(false);
     setShowExpenseDatePicker(false);
     setIsExpenseSheetOpen(false);
     setEditingTransactionId(null);
@@ -2568,6 +2887,11 @@ export default function App() {
     setShowExpenseDatePicker(false);
   }, [activeMonth?.id, editingTransactionId]);
 
+  useEffect(() => {
+    setExpenseAiSuggestion(null);
+    setExpenseAiError('');
+  }, [activeMonth.id, expenseAmount, expenseNote]);
+
   const expenseDateBounds = useMemo(
     () => getMonthBounds(activeMonth.id),
     [activeMonth.id],
@@ -2759,6 +3083,155 @@ export default function App() {
     } finally {
       setAiReviewBusyMonthId((current) => (current === activeMonth.id ? null : current));
     }
+  };
+
+  const generateAiExpenseAssist = async () => {
+    if (activeMonth.categories.length === 0) {
+      setExpenseAiError('Add at least one category before asking AI to classify an expense.');
+      return;
+    }
+
+    if (!expenseAiAssistPayload.note) {
+      setExpenseAiError('Add a note first so AI has something to classify.');
+      return;
+    }
+
+    if (expenseAiAssistPayload.amount <= 0) {
+      setExpenseAiError('Add the amount first so the suggestion has enough context.');
+      return;
+    }
+
+    setExpenseAiBusy(true);
+    setExpenseAiError('');
+
+    try {
+      if (!authUser) {
+        await ensureBudgetCloudUser();
+      }
+
+      const suggestion = await getBudgetAiExpenseAssist(expenseAiAssistPayload);
+
+      if (!suggestion) {
+        throw new Error('No AI expense suggestion returned.');
+      }
+
+      setExpenseAiSuggestion({
+        ...suggestion,
+        generatedAt: Date.now(),
+      });
+    } catch {
+      setExpenseAiError('Gemini could not suggest a match right now. Try again in a moment.');
+    } finally {
+      setExpenseAiBusy(false);
+    }
+  };
+
+  const applyExpenseAiSuggestion = () => {
+    if (!expenseAiSuggestion) {
+      return;
+    }
+
+    setExpenseCategoryId(expenseAiSuggestion.categoryId);
+    setExpenseRecurring(expenseAiSuggestion.recurring);
+
+    if (expenseAiSuggestion.accountId) {
+      setExpenseAccountId(expenseAiSuggestion.accountId);
+    }
+  };
+
+  const generateAiImportCleanup = async () => {
+    if (aiImportCleanupPayload.categories.length === 0) {
+      setImportCleanupError('Add or import categories first so the cleanup review has something to inspect.');
+      return;
+    }
+
+    setImportCleanupBusy(true);
+    setImportCleanupError('');
+
+    try {
+      if (!authUser) {
+        await ensureBudgetCloudUser();
+      }
+
+      const review = await getBudgetAiImportCleanup(aiImportCleanupPayload);
+
+      if (!review) {
+        throw new Error('No AI cleanup review returned.');
+      }
+
+      setImportCleanupReview({
+        ...review,
+        generatedAt: Date.now(),
+      });
+    } catch {
+      setImportCleanupError('Gemini cleanup review is unavailable right now. Try again in a moment.');
+    } finally {
+      setImportCleanupBusy(false);
+    }
+  };
+
+  const generateAiMonthPlanner = async () => {
+    if (monthlyLimitNumber <= 0) {
+      setMonthPlannerErrorByMonthId((current) => ({
+        ...current,
+        [activeMonth.id]: 'Set the month amount first so AI can size the starter plan.',
+      }));
+      return;
+    }
+
+    if (aiMonthPlannerPayload.historyCategories.length === 0) {
+      setMonthPlannerErrorByMonthId((current) => ({
+        ...current,
+        [activeMonth.id]: 'Track at least one earlier month before asking AI for a starter plan.',
+      }));
+      return;
+    }
+
+    setMonthPlannerBusyMonthId(activeMonth.id);
+    setMonthPlannerErrorByMonthId((current) => ({
+      ...current,
+      [activeMonth.id]: '',
+    }));
+
+    try {
+      if (!authUser) {
+        await ensureBudgetCloudUser();
+      }
+
+      const planner = await getBudgetAiMonthPlanner(aiMonthPlannerPayload);
+
+      if (!planner) {
+        throw new Error('No AI month planner returned.');
+      }
+
+      setMonthPlannerByMonthId((current) => ({
+        ...current,
+        [activeMonth.id]: {
+          ...planner,
+          generatedAt: Date.now(),
+        },
+      }));
+    } catch {
+      setMonthPlannerErrorByMonthId((current) => ({
+        ...current,
+        [activeMonth.id]: 'Gemini starter plan is unavailable right now. Try again in a moment.',
+      }));
+    } finally {
+      setMonthPlannerBusyMonthId((current) => (current === activeMonth.id ? null : current));
+    }
+  };
+
+  const applyAiPlannerSuggestion = (suggestion: MonthPlannerReview['suggestedCategories'][number]) => {
+    setEditingCategoryId(null);
+    setCategoryName(suggestion.name);
+    setCategoryPlanned(String(Number(suggestion.planned.toFixed(2))));
+    setCategorySubcategoriesText(suggestion.subcategories.join(', '));
+    setShowCategorySubcategories(suggestion.subcategories.length > 0);
+    setCategoryBucket(suggestion.bucket as CategoryBucket);
+    setCategoryBucketMode('manual');
+    setCategoryRecurring(suggestion.recurring);
+    setShowCategoryAdvanced(false);
+    setPlanSetupStep('categories');
   };
 
   const selectMonth = (monthId: string) => {
@@ -3246,6 +3719,8 @@ export default function App() {
     resetCategoryForm();
     resetGoalForm();
     resetAccountForm();
+    setImportCleanupReview(null);
+    setImportCleanupError('');
     setActiveScreen('home');
     Alert.alert('Import complete', successMessage);
   };
@@ -3549,6 +4024,74 @@ export default function App() {
             />
           </View>
         </View>
+
+        <View style={styles.sectionActionRow}>
+          <Pressable
+            style={[
+              styles.tertiaryButton,
+              (expenseAiBusy ||
+                !expenseAiAssistPayload.note ||
+                expenseAiAssistPayload.amount <= 0) &&
+                styles.buttonDisabled,
+            ]}
+            onPress={generateAiExpenseAssist}
+            disabled={
+              expenseAiBusy || !expenseAiAssistPayload.note || expenseAiAssistPayload.amount <= 0
+            }
+          >
+            <Text style={styles.tertiaryButtonText}>
+              {expenseAiBusy ? 'Checking...' : 'Suggest from note'}
+            </Text>
+          </Pressable>
+
+          {expenseAiSuggestion ? (
+            <Pressable style={styles.secondaryButton} onPress={applyExpenseAiSuggestion}>
+              <Text style={styles.secondaryButtonText}>Apply suggestion</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {expenseAiSuggestion ? (
+          <View style={styles.suggestionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionHeaderCopy}>
+                <Text style={styles.reviewTitle}>Suggested match</Text>
+                <Text style={styles.suggestionText}>{expenseAiSuggestion.reason}</Text>
+              </View>
+
+              <View style={styles.deltaChip}>
+                <Text style={styles.deltaChipText}>{expenseAiSuggestion.model}</Text>
+              </View>
+            </View>
+
+            <View style={styles.compactHighlightRow}>
+              {expenseAiSuggestedCategory ? (
+                <View style={styles.compactHighlightChip}>
+                  <Text style={styles.compactHighlightText}>{expenseAiSuggestedCategory.name}</Text>
+                </View>
+              ) : null}
+              {expenseAiSuggestedAccount ? (
+                <View style={styles.compactHighlightChip}>
+                  <Text style={styles.compactHighlightText}>{expenseAiSuggestedAccount.name}</Text>
+                </View>
+              ) : null}
+              <View style={styles.compactHighlightChip}>
+                <Text style={styles.compactHighlightText}>
+                  {expenseAiSuggestion.recurring ? 'Repeats likely' : 'One-off likely'}
+                </Text>
+              </View>
+              {expenseAiSuggestion.subcategoryHint ? (
+                <View style={styles.compactHighlightChip}>
+                  <Text style={styles.compactHighlightText}>
+                    Hint: {expenseAiSuggestion.subcategoryHint}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
+        {expenseAiError ? <Text style={styles.aiReviewErrorText}>{expenseAiError}</Text> : null}
 
         <View style={styles.formShell}>
           <Pressable
@@ -4413,6 +4956,91 @@ export default function App() {
               <Text style={styles.primaryButtonText}>Import file</Text>
             </Pressable>
           </View>
+
+          <View style={styles.formDivider} />
+
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionHeaderCopy}>
+              <Text style={styles.sectionTitle}>AI cleanup review</Text>
+              <Text style={styles.sectionSubtitle}>
+                Review category naming, recurring tags, account labels, and possible cleanup moves.
+              </Text>
+            </View>
+
+            <Pressable
+              style={[styles.tertiaryButton, importCleanupBusy && styles.buttonDisabled]}
+              onPress={generateAiImportCleanup}
+              disabled={importCleanupBusy}
+            >
+              <Text style={styles.tertiaryButtonText}>
+                {importCleanupBusy
+                  ? 'Reviewing...'
+                  : importCleanupReview
+                    ? 'Refresh review'
+                    : 'Review current data'}
+              </Text>
+            </Pressable>
+          </View>
+
+          {importCleanupReview ? (
+            <>
+              <View style={styles.aiReviewMetaRow}>
+                <View style={styles.deltaChip}>
+                  <Text style={styles.deltaChipText}>{importCleanupReview.model}</Text>
+                </View>
+              </View>
+
+              <View style={styles.aiReviewSummaryCard}>
+                <Text style={styles.reviewTitle}>{importCleanupReview.headline}</Text>
+                <Text style={styles.aiReviewSummaryText}>{importCleanupReview.summary}</Text>
+              </View>
+
+              <View style={styles.aiReviewWatchout}>
+                <Text style={styles.fieldLabel}>Watchout</Text>
+                <Text style={styles.suggestionText}>{importCleanupReview.watchout}</Text>
+              </View>
+
+              <View style={styles.aiReviewActionList}>
+                {importCleanupReview.actions.map((action, index) => (
+                  <View key={`${action}-${index}`} style={styles.aiReviewActionRow}>
+                    <View style={styles.aiReviewActionIndex}>
+                      <Text style={styles.suggestionBadgeText}>{index + 1}</Text>
+                    </View>
+                    <Text style={styles.aiReviewActionText}>{action}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {importCleanupReview.mergeSuggestions.length > 0 ? (
+                <>
+                  <Text style={styles.fieldLabel}>Possible merges</Text>
+                  <View style={styles.suggestionList}>
+                    {importCleanupReview.mergeSuggestions.map((suggestion) => (
+                      <View key={`${suggestion.from}-${suggestion.to}`} style={styles.suggestionCard}>
+                        <View style={styles.reviewCopy}>
+                          <Text style={styles.reviewTitle}>
+                            {`${suggestion.from} -> ${suggestion.to}`}
+                          </Text>
+                          <Text style={styles.suggestionText}>{suggestion.reason}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+            </>
+          ) : (
+            <View style={styles.emptyStateCompact}>
+              <Text style={styles.emptyTitle}>No cleanup review yet</Text>
+              <Text style={styles.emptyText}>
+                Run one quick AI pass when you want a second opinion on naming, duplicates, and recurring labels.
+              </Text>
+            </View>
+          )}
+
+          {importCleanupError ? (
+            <Text style={styles.aiReviewErrorText}>{importCleanupError}</Text>
+          ) : null}
         </View>
       ) : null}
     </>
@@ -5484,6 +6112,112 @@ export default function App() {
                     </Text>
                   </View>
                 </View>
+
+                {monthlyLimitNumber > 0 ? (
+                  <View style={styles.suggestionCard}>
+                    <View style={styles.sectionHeader}>
+                      <View style={styles.sectionHeaderCopy}>
+                        <Text style={styles.reviewTitle}>AI starter plan</Text>
+                        <Text style={styles.suggestionText}>
+                          Pull a few likely categories from earlier months, then apply only what still fits.
+                        </Text>
+                      </View>
+
+                      <Pressable
+                        style={[styles.tertiaryButton, monthPlannerBusy && styles.buttonDisabled]}
+                        onPress={generateAiMonthPlanner}
+                        disabled={monthPlannerBusy}
+                      >
+                        <Text style={styles.tertiaryButtonText}>
+                          {monthPlannerBusy
+                            ? 'Thinking...'
+                            : activeMonthPlanner
+                              ? 'Refresh plan'
+                              : 'Suggest starter lanes'}
+                        </Text>
+                      </Pressable>
+                    </View>
+
+                    {activeMonthPlanner ? (
+                      <>
+                        <View style={styles.aiReviewMetaRow}>
+                          <View style={styles.deltaChip}>
+                            <Text style={styles.deltaChipText}>{activeMonthPlanner.model}</Text>
+                          </View>
+                        </View>
+
+                        <Text style={styles.reviewTitle}>{activeMonthPlanner.headline}</Text>
+                        <Text style={styles.suggestionText}>{activeMonthPlanner.summary}</Text>
+
+                        <View style={styles.compactHighlightRow}>
+                          {activeMonthPlanner.actions.map((action) => (
+                            <View key={action} style={styles.compactHighlightChip}>
+                              <Text style={styles.compactHighlightText}>{action}</Text>
+                            </View>
+                          ))}
+                        </View>
+
+                        <View style={styles.suggestionList}>
+                          {activeMonthPlanner.suggestedCategories.map((suggestion) => (
+                            <View
+                              key={`${suggestion.name}-${suggestion.bucket}`}
+                              style={styles.suggestionCard}
+                            >
+                              <View style={styles.sectionHeader}>
+                                <View style={styles.sectionHeaderCopy}>
+                                  <Text style={styles.reviewTitle}>
+                                    {suggestion.name} {formatCurrency(suggestion.planned)}
+                                  </Text>
+                                  <Text style={styles.suggestionText}>{suggestion.reason}</Text>
+                                </View>
+
+                                <Pressable
+                                  style={styles.inlineButtonCompact}
+                                  onPress={() => applyAiPlannerSuggestion(suggestion)}
+                                >
+                                  <Text style={styles.inlineButtonText}>Use</Text>
+                                </Pressable>
+                              </View>
+
+                              <View style={styles.compactHighlightRow}>
+                                <View style={styles.compactHighlightChip}>
+                                  <Text style={styles.compactHighlightText}>
+                                    {categoryBucketMeta[suggestion.bucket as CategoryBucket].label}
+                                  </Text>
+                                </View>
+                                {suggestion.recurring ? (
+                                  <View style={styles.compactHighlightChip}>
+                                    <Text style={styles.compactHighlightText}>Recurring</Text>
+                                  </View>
+                                ) : null}
+                                {suggestion.subcategories.length > 0 ? (
+                                  <View style={styles.compactHighlightChip}>
+                                    <Text style={styles.compactHighlightText}>
+                                      {suggestion.subcategories.join(', ')}
+                                    </Text>
+                                  </View>
+                                ) : null}
+                              </View>
+                            </View>
+                          ))}
+                        </View>
+
+                        <Text style={styles.forecastStatMeta}>{activeMonthPlanner.watchout}</Text>
+                      </>
+                    ) : (
+                      <View style={styles.emptyStateCompact}>
+                        <Text style={styles.emptyTitle}>No AI starter plan yet</Text>
+                        <Text style={styles.emptyText}>
+                          Ask Gemini to pull likely categories from your earlier months, then use any suggestion to prefill the form.
+                        </Text>
+                      </View>
+                    )}
+
+                    {activeMonthPlannerError ? (
+                      <Text style={styles.aiReviewErrorText}>{activeMonthPlannerError}</Text>
+                    ) : null}
+                  </View>
+                ) : null}
 
                 <Text style={styles.fieldLabel}>Common essentials</Text>
                 <View style={styles.chipWrap}>

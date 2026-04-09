@@ -53,7 +53,7 @@ const getUnavailableMessage = () => {
     return 'Premium subscriptions are configured for iOS only right now.';
   }
 
-  return 'Add EXPO_PUBLIC_REVENUECAT_IOS_API_KEY before testing premium purchases.';
+  return 'Premium purchases are not connected in this build yet.';
 };
 
 const canUseRevenueCat = Platform.OS === 'ios' && Boolean(iosApiKey);

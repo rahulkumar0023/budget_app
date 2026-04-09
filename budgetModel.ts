@@ -79,6 +79,7 @@ export type BankAccount = {
 export type Transaction = {
   id: string;
   categoryId: string;
+  subcategory?: string;
   accountId?: string;
   amount: number;
   note: string;
@@ -1037,6 +1038,10 @@ const normalizeTransaction = (value: unknown): Transaction | null => {
   return {
     id: typeof value.id === 'string' && value.id ? value.id : createId('txn'),
     categoryId,
+    subcategory:
+      typeof value.subcategory === 'string' && value.subcategory.trim()
+        ? value.subcategory.trim()
+        : undefined,
     accountId: typeof value.accountId === 'string' && value.accountId ? value.accountId : undefined,
     amount,
     note: typeof value.note === 'string' ? value.note : '',

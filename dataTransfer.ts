@@ -91,6 +91,7 @@ const csvHeaders = [
   'categorySubcategories',
   'amount',
   'note',
+  'transactionSubcategory',
   'happenedAt',
   'transactionRecurring',
   'transactionAccountName',
@@ -402,6 +403,7 @@ export const buildLedgerCsv = (appState: BudgetAppState) => {
           '',
           '',
           '',
+          '',
         ]);
         return;
       }
@@ -423,6 +425,7 @@ export const buildLedgerCsv = (appState: BudgetAppState) => {
           category.subcategories.join(' | '),
           String(transaction.amount),
           transaction.note,
+          transaction.subcategory ?? '',
           transaction.happenedAt,
           String(transaction.recurring),
           account?.name ?? '',
@@ -498,6 +501,10 @@ export const importLedgerCsv = (csv: string, referenceDate = new Date()) => {
     month.transactions.push({
       id: createId('txn'),
       categoryId: category.id,
+      subcategory:
+        columnIndex.transactionSubcategory !== undefined
+          ? row[columnIndex.transactionSubcategory]?.trim() || undefined
+          : undefined,
       accountId: account?.id,
       amount,
       note: row[columnIndex.note] || '',
@@ -568,6 +575,7 @@ export const buildWorkbookBase64 = (appState: BudgetAppState) => {
         appState.accounts.find((account) => account.id === transaction.accountId)?.customKinds.join('|') ?? '',
       amount: transaction.amount,
       note: transaction.note,
+      subcategory: transaction.subcategory ?? '',
       happenedAt: transaction.happenedAt,
       recurring: transaction.recurring,
     })),
@@ -723,6 +731,10 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
     month.transactions.push({
       id: typeof row.id === 'string' && row.id ? row.id : createId('txn'),
       categoryId,
+      subcategory:
+        typeof row.subcategory === 'string' && row.subcategory.trim()
+          ? row.subcategory.trim()
+          : undefined,
       accountId,
       amount,
       note: typeof row.note === 'string' ? row.note : '',
@@ -1187,7 +1199,12 @@ export const buildBudgetPdfHtml = (appState: BudgetAppState, month: MonthRecord)
     .map(
       (transaction) => `
         <tr>
-          <td>${escapeHtml(transaction.note || 'Expense')}</td>
+          <td>${escapeHtml(
+            transaction.note ||
+              transaction.subcategory ||
+              month.categories.find((category) => category.id === transaction.categoryId)?.name ||
+              'Expense',
+          )}</td>
           <td>${escapeHtml(transaction.happenedAt.slice(0, 10))}</td>
           <td>${currency(transaction.amount, currencyCode, localeTag)}</td>
         </tr>`,

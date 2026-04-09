@@ -218,6 +218,61 @@ type InsightSummary = {
 };
 
 const PREMIUM_PAYWALL_DISMISS_KEY = 'budget-buddy:premium-paywall-dismissed:v1';
+
+const getTransactionDisplayTitle = (
+  transaction: Transaction,
+  fallbackCategoryName?: string | null,
+) => transaction.note.trim() || transaction.subcategory || fallbackCategoryName || 'Expense';
+
+const findMatchingSubcategory = (subcategories: string[], candidate?: string | null) => {
+  if (!candidate) {
+    return '';
+  }
+
+  const normalizedCandidate = candidate.trim().toLowerCase();
+  if (!normalizedCandidate) {
+    return '';
+  }
+
+  const exactMatch = subcategories.find(
+    (subcategory) => subcategory.trim().toLowerCase() === normalizedCandidate,
+  );
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  return (
+    subcategories.find((subcategory) => {
+      const normalizedSubcategory = subcategory.trim().toLowerCase();
+      return (
+        normalizedCandidate.includes(normalizedSubcategory) ||
+        normalizedSubcategory.includes(normalizedCandidate)
+      );
+    }) ?? ''
+  );
+};
+
+const resolveExpenseSubcategory = (
+  category: Category | null | undefined,
+  candidate?: string | null,
+  { preferSingle = false }: { preferSingle?: boolean } = {},
+) => {
+  if (!category) {
+    return '';
+  }
+
+  const matched = findMatchingSubcategory(category.subcategories, candidate);
+  if (matched) {
+    return matched;
+  }
+
+  if (preferSingle && category.subcategories.length === 1) {
+    return category.subcategories[0];
+  }
+
+  return '';
+};
 const QUICK_START_PRESET_COUNT = 3;
 const MAX_RECENT_EXPENSE_TEMPLATES = 4;
 const MAX_RECENT_CATEGORY_SHORTCUTS = 4;
@@ -234,8 +289,8 @@ const paywallSourceMeta: Record<
     subtitle: 'Use Gemini to suggest the right category, account, and repeat flag before you save.',
   },
   ai_import_cleanup: {
-    title: 'Unlock AI cleanup review',
-    subtitle: 'Review imported categories, recurring tags, and naming inconsistencies before they spread.',
+    title: 'Unlock smart tidy-up',
+    subtitle: 'Scan imported categories for duplicates, naming drift, and repeat labels before the budget gets messy.',
   },
   ai_review: {
     title: 'Unlock AI monthly review',
@@ -1192,6 +1247,7 @@ export default function App() {
   const [expenseAmount, setExpenseAmount] = useState('');
   const [expenseNote, setExpenseNote] = useState('');
   const [expenseCategoryId, setExpenseCategoryId] = useState('');
+  const [expenseSubcategory, setExpenseSubcategory] = useState('');
   const [expenseAccountId, setExpenseAccountId] = useState('');
   const [expenseDate, setExpenseDate] = useState(() => new Date());
   const [expenseRecurring, setExpenseRecurring] = useState(false);
@@ -1711,6 +1767,8 @@ export default function App() {
         ? `After save: ${formatCurrency(projectedAllocationDelta)} left`
         : `After save: ${formatCurrency(Math.abs(projectedAllocationDelta))} over`
       : '';
+  const isCategoryDetailsOpen =
+    showCategorySubcategories || showCategoryAdvanced || categorySubcategoriesText.trim().length > 0;
   const categoryBucketHint = isCategoryBucketAuto
     ? categoryName.trim()
       ? `Auto picked ${categoryBucketMeta[categoryBucket].label.toLowerCase()} from the category name. Change it only if it looks wrong.`
@@ -2300,6 +2358,9 @@ export default function App() {
       : null;
   const expenseAiSuggestedAccount =
     expenseAiSuggestion?.accountId ? accountMap.get(expenseAiSuggestion.accountId) ?? null : null;
+  const selectedExpenseCategory =
+    activeMonth.categories.find((category) => category.id === expenseCategoryId) ?? null;
+  const selectedExpenseSubcategories = selectedExpenseCategory?.subcategories ?? [];
 
   const categoryToneById = useMemo(
     () =>
@@ -2383,6 +2444,7 @@ export default function App() {
     for (const transaction of sortTransactions(activeMonth.transactions, 'recent')) {
       const key = [
         transaction.categoryId,
+        transaction.subcategory ?? '',
         transaction.accountId ?? '',
         transaction.recurring ? '1' : '0',
         transaction.note.trim().toLowerCase(),
@@ -2442,6 +2504,7 @@ export default function App() {
           (item) => item.id === transaction.categoryId,
         );
         const categoryName = category?.name.toLowerCase() ?? '';
+        const subcategoryName = transaction.subcategory?.toLowerCase() ?? '';
         const note = transaction.note.toLowerCase();
         const tone = categoryToneById.get(transaction.categoryId)?.tone ?? 'good';
 
@@ -2449,6 +2512,7 @@ export default function App() {
           !normalizedQuery ||
           note.includes(normalizedQuery) ||
           categoryName.includes(normalizedQuery) ||
+          subcategoryName.includes(normalizedQuery) ||
           formatCurrency(transaction.amount).toLowerCase().includes(normalizedQuery);
 
         const matchesFilter =
@@ -2618,20 +2682,22 @@ export default function App() {
     null;
   const cloudBackupEnabled = appState.preferences.cloudBackupEnabled;
   const shouldUseCloudBackup = cloudBackupEnabled && isSignedIn && hasPremiumAccess;
-  const accountLabel =
-    authUser && !authUser.isAnonymous && authUser.email ? authUser.email : 'Guest mode';
   const premiumStatusLabel =
     purchaseState === 'loading'
       ? 'Checking premium'
       : hasPremiumAccess
         ? 'Premium active'
         : 'Free plan';
+  const friendlyPurchaseError =
+    purchaseSnapshot.lastError?.includes('EXPO_PUBLIC_REVENUECAT_IOS_API_KEY')
+      ? 'Premium purchases are not connected in this build yet.'
+      : purchaseSnapshot.lastError;
   const premiumStatusMeta =
     purchaseState === 'error'
-      ? purchaseSnapshot.lastError ?? 'Premium is not connected yet.'
+      ? friendlyPurchaseError ?? 'Premium is not connected yet.'
       : hasPremiumAccess
-        ? 'AI features and optional Firebase backup are unlocked for this install.'
-        : 'Core budgeting stays free. AI tools and recoverable backup are part of Premium.';
+        ? 'AI tools and optional reinstall recovery are unlocked.'
+        : 'Core budgeting stays free. Premium adds AI help and optional reinstall recovery.';
   const authEmailNormalized = authEmail.trim().toLowerCase();
   const authStatusIsError =
     /could not|did not|enter |at least 6|must match|failed|too many|not enabled|invalid|network/i.test(
@@ -2645,26 +2711,35 @@ export default function App() {
     authPassword.length < 6 ||
     (authMode === 'create' && authPassword !== authConfirmPassword);
   const accountManagementBusy = authBusy || deleteAccountBusy;
-  const authModeHighlights =
-    authMode === 'create'
-      ? ['Keep this guest budget', 'Sync across devices']
-      : ['Load your saved budget', 'Use the linked email'];
   const cloudBackupMessage =
     saveState === 'error'
       ? 'Local save failed on this device. Check storage space, then try again.'
       : !hasPremiumAccess
-        ? 'Firebase backup is a Premium feature. The app stays local-only until Premium is active.'
+        ? 'Backup stays off until Premium is active.'
       : !cloudBackupEnabled
-      ? 'Local-only mode is active. Turn on Firebase backup only if you want recovery after reinstall or on another device.'
+      ? 'Local-only mode is active.'
       : !isSignedIn
-        ? 'Premium is active, but recoverable backup still needs you to create an account or sign in.'
+        ? 'Sign in to turn on recoverable backup.'
         : cloudState === 'connecting'
-          ? 'Checking Firebase backup for this account...'
+          ? 'Checking backup status...'
           : cloudState === 'syncing'
-            ? 'Saving the latest backup to Firebase...'
+            ? 'Saving backup...'
             : cloudState === 'synced'
-              ? 'Firebase backup is up to date for this account.'
-              : 'Firebase backup is unavailable right now. Your local copy is still safe on this device.';
+              ? 'Backup is up to date.'
+              : 'Backup is unavailable right now. Your local copy is still safe.';
+  const accountModeValue = isSignedIn ? 'Signed in' : 'Guest';
+  const accountModeMeta = isSignedIn
+    ? authUser?.email ?? 'Signed in on this device.'
+    : 'Everything stays on this device until you choose backup.';
+  const backupStateValue =
+    hasPremiumAccess && cloudBackupEnabled && isSignedIn ? 'Backup on' : 'Local only';
+  const backupStateMeta = hasPremiumAccess
+    ? isSignedIn
+      ? cloudBackupEnabled
+        ? 'Recoverable after reinstall.'
+        : 'Turn it on only when you want recovery.'
+      : 'Sign in first to enable recovery.'
+    : 'Needs Premium and sign-in.';
   const settingsSections: Array<{ id: SettingsSection; label: string }> = [
     { id: 'appearance', label: 'Look' },
     { id: 'locale', label: 'Locale' },
@@ -2859,6 +2934,7 @@ export default function App() {
   const resetTransactionForm = () => {
     setExpenseAmount('');
     setExpenseNote('');
+    setExpenseSubcategory('');
     setExpenseAccountId(bankAccounts[0]?.id ?? '');
     setExpenseDate(getDefaultExpenseDate(activeMonth?.id ?? getMonthId(new Date())));
     setExpenseRecurring(false);
@@ -2870,7 +2946,11 @@ export default function App() {
     setEditingTransactionId(null);
   };
 
-  const openExpenseCapture = (categoryId?: string, nextScreen: ScreenId | null = 'spend') => {
+  const openExpenseCapture = (
+    categoryId?: string,
+    nextScreen: ScreenId | null = 'spend',
+    subcategory?: string,
+  ) => {
     if (activeMonth.categories.length === 0) {
       openPlanCategories();
       return;
@@ -2882,6 +2962,7 @@ export default function App() {
       const category = activeMonth.categories.find((item) => item.id === categoryId);
       setExpenseCategoryId(categoryId);
       setExpenseRecurring(category?.recurring ?? false);
+      setExpenseSubcategory(resolveExpenseSubcategory(category, subcategory, { preferSingle: true }));
     }
 
     setIsExpenseSheetOpen(true);
@@ -2896,13 +2977,18 @@ export default function App() {
     setExpenseCategoryId(categoryId);
     if (category) {
       setExpenseRecurring(category.recurring);
+      setExpenseSubcategory((current) => resolveExpenseSubcategory(category, current));
+    } else {
+      setExpenseSubcategory('');
     }
   };
 
   const applyExpenseTemplate = (transaction: Transaction) => {
+    const category = activeMonth.categories.find((item) => item.id === transaction.categoryId);
     setExpenseAmount(String(Number(transaction.amount.toFixed(2))));
     setExpenseNote(transaction.note);
     setExpenseCategoryId(transaction.categoryId);
+    setExpenseSubcategory(resolveExpenseSubcategory(category, transaction.subcategory));
     setExpenseAccountId(transaction.accountId ?? bankAccounts[0]?.id ?? '');
     setExpenseRecurring(transaction.recurring);
     setExpenseDate(getDefaultExpenseDate(activeMonth.id));
@@ -3434,6 +3520,22 @@ export default function App() {
   }, [activeMonth, expenseCategoryId]);
 
   useEffect(() => {
+    if (!selectedExpenseCategory) {
+      if (expenseSubcategory) {
+        setExpenseSubcategory('');
+      }
+      return;
+    }
+
+    if (
+      expenseSubcategory &&
+      !resolveExpenseSubcategory(selectedExpenseCategory, expenseSubcategory)
+    ) {
+      setExpenseSubcategory('');
+    }
+  }, [expenseSubcategory, selectedExpenseCategory]);
+
+  useEffect(() => {
     if (editingTransactionId) {
       return;
     }
@@ -3715,6 +3817,9 @@ export default function App() {
 
     setExpenseCategoryId(expenseAiSuggestion.categoryId);
     setExpenseRecurring(expenseAiSuggestion.recurring);
+    setExpenseSubcategory(
+      resolveExpenseSubcategory(expenseAiSuggestedCategory, expenseAiSuggestion.subcategoryHint),
+    );
 
     if (expenseAiSuggestion.accountId) {
       setExpenseAccountId(expenseAiSuggestion.accountId);
@@ -3728,7 +3833,7 @@ export default function App() {
     }
 
     if (aiImportCleanupPayload.categories.length === 0) {
-      setImportCleanupError('Add or import categories first so the cleanup review has something to inspect.');
+      setImportCleanupError('Add or import categories first so the tidy-up check has something to inspect.');
       return;
     }
 
@@ -3743,7 +3848,7 @@ export default function App() {
       const review = await getBudgetAiImportCleanup(aiImportCleanupPayload);
 
       if (!review) {
-        throw new Error('No AI cleanup review returned.');
+        throw new Error('No tidy-up review returned.');
       }
 
       setImportCleanupReview({
@@ -3751,7 +3856,7 @@ export default function App() {
         generatedAt: Date.now(),
       });
     } catch {
-      setImportCleanupError('Gemini cleanup review is unavailable right now. Try again in a moment.');
+      setImportCleanupError('Smart tidy-up is unavailable right now. Try again in a moment.');
     } finally {
       setImportCleanupBusy(false);
     }
@@ -3872,12 +3977,16 @@ export default function App() {
 
   const openBudgetBuilder = () => {
     resetCategoryForm();
+    setShowPlanCategoryList(false);
+    setShowAllPlanCategories(false);
     setPlanSetupStep(activeMonth.categories.length > 0 || monthlyLimitNumber > 0 ? 'categories' : suggestedPlanSetupStep);
     navigateToScreen('plan');
   };
 
   const openPlanCategories = () => {
     resetCategoryForm();
+    setShowPlanCategoryList(false);
+    setShowAllPlanCategories(false);
     setPlanSetupStep(monthlyLimitNumber > 0 ? 'categories' : 'limit');
     navigateToScreen('plan');
   };
@@ -4005,6 +4114,7 @@ export default function App() {
                   amount,
                   note: expenseNote.trim(),
                   categoryId: expenseCategoryId,
+                  subcategory: expenseSubcategory || undefined,
                   accountId: expenseAccountId || undefined,
                   recurring: expenseRecurring,
                   happenedAt: nextDate,
@@ -4017,6 +4127,7 @@ export default function App() {
               amount,
               note: expenseNote.trim(),
               categoryId: expenseCategoryId,
+              subcategory: expenseSubcategory || undefined,
               accountId: expenseAccountId || undefined,
               recurring: expenseRecurring,
               happenedAt: nextDate,
@@ -4034,6 +4145,7 @@ export default function App() {
     setExpenseAmount(String(transaction.amount));
     setExpenseNote(transaction.note);
     setExpenseCategoryId(transaction.categoryId);
+    setExpenseSubcategory(transaction.subcategory ?? '');
     setExpenseAccountId(transaction.accountId ?? '');
     setExpenseDate(clampDateToMonth(new Date(transaction.happenedAt), activeMonth.id));
     setExpenseRecurring(transaction.recurring);
@@ -4106,6 +4218,7 @@ export default function App() {
 
     if (keepEditing && !editingCategoryId) {
       resetCategoryForm();
+      setShowPlanCategoryList(false);
       setPlanSetupStep('categories');
       return;
     }
@@ -4122,6 +4235,7 @@ export default function App() {
           ),
     );
     resetCategoryForm();
+    setShowPlanCategoryList(false);
   };
 
   const editCategory = (category: Category) => {
@@ -4597,7 +4711,7 @@ export default function App() {
               {recentExpenseTemplates.map((transaction) => {
                 const category =
                   activeMonth.categories.find((item) => item.id === transaction.categoryId) ?? null;
-                const label = transaction.note.trim() || category?.name || 'Recent expense';
+                const label = getTransactionDisplayTitle(transaction, category?.name);
 
                 return (
                   <Pressable
@@ -4835,6 +4949,39 @@ export default function App() {
           })}
         </View>
 
+        {selectedExpenseSubcategories.length > 0 ? (
+          <>
+            <Text style={styles.fieldLabel}>Subcategory</Text>
+            <View style={styles.chipWrap}>
+              <Pressable
+                style={[styles.filterChip, !expenseSubcategory && styles.filterChipActive]}
+                onPress={() => setExpenseSubcategory('')}
+              >
+                <Text
+                  style={[styles.filterChipText, !expenseSubcategory && styles.filterChipTextActive]}
+                >
+                  No subcategory
+                </Text>
+              </Pressable>
+              {selectedExpenseSubcategories.map((subcategory) => {
+                const selected = expenseSubcategory === subcategory;
+
+                return (
+                  <Pressable
+                    key={subcategory}
+                    style={[styles.filterChip, selected && styles.filterChipActive]}
+                    onPress={() => setExpenseSubcategory(subcategory)}
+                  >
+                    <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
+                      {subcategory}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        ) : null}
+
         <View style={styles.switchRow}>
           <Text style={styles.switchLabel}>Repeat this expense next month</Text>
           <Switch
@@ -5001,7 +5148,7 @@ export default function App() {
     const paywallFeatures = [
       'AI-powered monthly review',
       'Smarter expense suggestions',
-      'Import cleanup and starter-plan help',
+      'Smart tidy-up and starter-plan help',
       'Recoverable Firebase backup after reinstall',
     ];
     const secondaryPackage =
@@ -5081,7 +5228,7 @@ export default function App() {
                 <View style={styles.emptyStateCompact}>
                   <Text style={styles.emptyTitle}>Premium packages not ready</Text>
                   <Text style={styles.emptyText}>
-                    Finish the RevenueCat setup, then reopen this screen to load the monthly and yearly offers.
+                    Premium offers are not available in this build yet. Reopen this screen when subscriptions are connected.
                   </Text>
                 </View>
               )}
@@ -5106,8 +5253,8 @@ export default function App() {
                 Billing is handled by Apple. Premium covers AI reviews, AI helpers, and optional Firebase backup.
               </Text>
 
-              {purchaseState === 'error' && purchaseSnapshot.lastError ? (
-                <Text style={styles.aiReviewErrorText}>{purchaseSnapshot.lastError}</Text>
+              {purchaseState === 'error' && friendlyPurchaseError ? (
+                <Text style={styles.aiReviewErrorText}>{friendlyPurchaseError}</Text>
               ) : null}
 
               {paywallStatus ? <Text style={styles.aiReviewErrorText}>{paywallStatus}</Text> : null}
@@ -5360,20 +5507,23 @@ export default function App() {
       {activeSettingsSection === 'cloud' ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Account and backup</Text>
-          <Text style={styles.sectionSubtitle}>Local-first by default. Sign in only for recoverable backup.</Text>
+          <Text style={styles.sectionSubtitle}>Keep everyday budgeting local. Turn on backup only when you want recovery after reinstall.</Text>
 
-          <View style={styles.accountBanner}>
-            <View style={styles.accountCopy}>
-              <Text style={styles.accountTitle}>{accountLabel}</Text>
-              <Text style={styles.accountMeta}>
-                {isSignedIn
-                  ? 'Signed in. Premium unlocks AI and optional Firebase backup.'
-                  : 'Guest mode keeps everything on this device.'}
-              </Text>
+          <View style={styles.accountStatusGrid}>
+            <View style={styles.accountStatusTile}>
+              <Text style={styles.accountStatusLabel}>Mode</Text>
+              <Text style={styles.accountStatusValue}>{accountModeValue}</Text>
+              <Text style={styles.accountStatusMeta}>{accountModeMeta}</Text>
+            </View>
+
+            <View style={styles.accountStatusTile}>
+              <Text style={styles.accountStatusLabel}>Backup</Text>
+              <Text style={styles.accountStatusValue}>{backupStateValue}</Text>
+              <Text style={styles.accountStatusMeta}>{backupStateMeta}</Text>
             </View>
           </View>
 
-          <View style={styles.suggestionCard}>
+          <View style={styles.accountBanner}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionHeaderCopy}>
                 <Text style={styles.reviewTitle}>{premiumStatusLabel}</Text>
@@ -5387,14 +5537,6 @@ export default function App() {
                   <Text style={styles.inlineButtonText}>Upgrade</Text>
                 </Pressable>
               ) : null}
-            </View>
-
-            <View style={styles.compactHighlightRow}>
-              {['AI monthly review', 'AI expense help', 'Recoverable backup'].map((item) => (
-                <View key={item} style={styles.compactHighlightChip}>
-                  <Text style={styles.compactHighlightText}>{item}</Text>
-                </View>
-              ))}
             </View>
 
             <View style={styles.actionRow}>
@@ -5421,6 +5563,13 @@ export default function App() {
           {!isPaywallVisible && paywallStatus ? (
             <Text style={styles.aiReviewErrorText}>{paywallStatus}</Text>
           ) : null}
+
+          <View style={styles.accountPromptCard}>
+            <Text style={styles.reviewTitle}>Firebase backup</Text>
+            <Text style={styles.suggestionText}>
+              Keep it off unless you want this budget back after reinstall or on another device.
+            </Text>
+          </View>
 
           <View style={styles.switchRow}>
             <View style={styles.sheetHeaderCopy}>
@@ -5449,12 +5598,11 @@ export default function App() {
 
           {!isSignedIn ? (
             <>
-              <View style={styles.compactHighlightRow}>
-                {authModeHighlights.map((item) => (
-                  <View key={item} style={styles.compactHighlightChip}>
-                    <Text style={styles.compactHighlightText}>{item}</Text>
-                  </View>
-                ))}
+              <View style={styles.accountPromptCard}>
+                <Text style={styles.reviewTitle}>Stay local or sign in</Text>
+                <Text style={styles.suggestionText}>
+                  Create an account only when you want reinstall recovery or cross-device backup.
+                </Text>
               </View>
 
               {!showAuthComposer ? (
@@ -5766,8 +5914,8 @@ export default function App() {
 
           <View style={styles.sectionHeader}>
             <View style={styles.sectionHeaderCopy}>
-              <Text style={styles.sectionTitle}>AI cleanup review</Text>
-              <Text style={styles.sectionSubtitle}>Check names, duplicates, and recurring labels.</Text>
+              <Text style={styles.sectionTitle}>Smart tidy-up</Text>
+              <Text style={styles.sectionSubtitle}>Spot duplicate lanes, naming drift, and repeat labels after imports.</Text>
             </View>
 
             <Pressable
@@ -5777,21 +5925,21 @@ export default function App() {
             >
               <Text style={styles.tertiaryButtonText}>
                 {!hasPremiumAccess
-                  ? 'Unlock cleanup review'
+                  ? 'Unlock tidy-up'
                   : importCleanupBusy
-                    ? 'Reviewing...'
+                    ? 'Checking...'
                     : importCleanupReview
-                      ? 'Refresh review'
-                      : 'Review current data'}
+                      ? 'Refresh'
+                      : 'Check data'}
               </Text>
             </Pressable>
           </View>
 
           {!hasPremiumAccess ? (
             <View style={styles.emptyStateCompact}>
-              <Text style={styles.emptyTitle}>Premium cleanup review</Text>
+              <Text style={styles.emptyTitle}>Premium tidy-up</Text>
               <Text style={styles.emptyText}>
-                Premium reviews naming drift, likely duplicates, and recurring tags after imports.
+                Premium can scan naming drift, likely duplicates, and repeat labels after imports.
               </Text>
             </View>
           ) : importCleanupReview ? (
@@ -5825,7 +5973,7 @@ export default function App() {
 
               {importCleanupReview.mergeSuggestions.length > 0 ? (
                 <>
-                  <Text style={styles.fieldLabel}>Possible merges</Text>
+                  <Text style={styles.fieldLabel}>Suggested merges</Text>
                   <View style={styles.suggestionList}>
                     {importCleanupReview.mergeSuggestions.map((suggestion) => (
                       <View key={`${suggestion.from}-${suggestion.to}`} style={styles.suggestionCard}>
@@ -5843,9 +5991,9 @@ export default function App() {
             </>
           ) : (
             <View style={styles.emptyStateCompact}>
-              <Text style={styles.emptyTitle}>No cleanup review yet</Text>
+              <Text style={styles.emptyTitle}>No tidy-up yet</Text>
               <Text style={styles.emptyText}>
-                Run one quick pass when you want a second opinion on cleanup.
+                Run one quick pass after imports or when categories start feeling messy.
               </Text>
             </View>
           )}
@@ -6454,7 +6602,7 @@ export default function App() {
                   const account = transaction.accountId ? accountMap.get(transaction.accountId) : null;
                   const theme = category ? categoryThemes[category.themeId] : categoryThemes.citrus;
                   const tone = categoryToneById.get(transaction.categoryId)?.tone ?? 'good';
-                  const title = transaction.note.trim() || category?.name || 'Expense';
+                  const title = getTransactionDisplayTitle(transaction, category?.name);
                   const toneLabel =
                     tone === 'alert' ? 'Over plan' : tone === 'warning' ? 'Watch' : 'Healthy';
 
@@ -6496,6 +6644,12 @@ export default function App() {
                               {category?.name ?? 'Uncategorized'}
                             </Text>
                           </View>
+
+                          {transaction.subcategory ? (
+                            <View style={styles.transactionTag}>
+                              <Text style={styles.transactionTagText}>{transaction.subcategory}</Text>
+                            </View>
+                          ) : null}
 
                           {account ? (
                             <View style={styles.transactionTag}>
@@ -6919,34 +7073,28 @@ export default function App() {
                   ) : null}
                 </View>
 
-                <View style={styles.planCompactStatusRow}>
-                  <View style={styles.planCompactStatusPill}>
-                    <Text style={styles.planCompactStatusLabel}>Budget</Text>
-                    <Text style={styles.planCompactStatusValue}>
-                      {monthlyLimitNumber > 0 ? formatCurrency(monthlyLimitNumber) : 'Set amount'}
-                    </Text>
-                  </View>
-                  <View style={styles.planCompactStatusPill}>
-                    <Text style={styles.planCompactStatusLabel}>Assigned</Text>
-                    <Text style={styles.planCompactStatusValue}>{formatCurrency(totalPlanned)}</Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.planCompactStatusPill,
-                      allocationDifference < 0
-                        ? styles.planCompactStatusPillAlert
-                        : allocationDifference > 0
-                          ? styles.planCompactStatusPillGood
-                          : styles.planCompactStatusPillNeutral,
-                    ]}
-                  >
-                    <Text style={styles.planCompactStatusLabel}>
-                      {allocationDifference < 0 ? 'Over' : 'Left'}
-                    </Text>
-                    <Text style={styles.planCompactStatusValue}>
-                      {formatCurrency(Math.abs(allocationDifference))}
-                    </Text>
-                  </View>
+                <View
+                  style={[
+                    styles.planSummaryStrip,
+                    allocationDifference < 0
+                      ? styles.planSummaryStripAlert
+                      : allocationDifference > 0
+                        ? styles.planSummaryStripGood
+                        : styles.planSummaryStripNeutral,
+                  ]}
+                >
+                  <Text style={styles.planSummaryTitle}>
+                    {allocationDifference < 0
+                      ? `${formatCurrency(Math.abs(allocationDifference))} over`
+                      : allocationDifference > 0
+                        ? `${formatCurrency(allocationDifference)} left`
+                        : 'Fully assigned'}
+                  </Text>
+                  <Text style={styles.planSummaryMeta}>
+                    {`${formatCurrency(totalPlanned)} assigned of ${
+                      monthlyLimitNumber > 0 ? formatCurrency(monthlyLimitNumber) : 'your budget'
+                    }`}
+                  </Text>
                 </View>
 
                 {monthlyLimitNumber > 0 ? (
@@ -7053,24 +7201,21 @@ export default function App() {
                         <Text style={styles.aiReviewErrorText}>{activeMonthPlannerError}</Text>
                       ) : null}
                     </View>
-                  ) : (
-                    <View style={styles.inlineAssistCard}>
-                      <View style={styles.inlineAssistCopy}>
-                        <Text style={styles.inlineAssistTitle}>Starter help</Text>
-                        <Text style={styles.inlineAssistText}>
-                          Pull a few likely lanes from earlier months only when you need a nudge.
-                        </Text>
-                      </View>
-                      <Pressable style={styles.tertiaryButton} onPress={generateAiMonthPlanner}>
-                        <Text style={styles.tertiaryButtonText}>
-                          {!hasPremiumAccess ? 'Unlock AI' : 'Suggest'}
-                        </Text>
-                      </Pressable>
-                    </View>
-                  )
+                  ) : null
                 ) : null}
 
-                <Text style={styles.fieldLabel}>Quick start</Text>
+                <View style={styles.sectionHeader}>
+                  <View style={styles.sectionHeaderCopy}>
+                    <Text style={styles.fieldLabel}>Quick start</Text>
+                  </View>
+                  {monthlyLimitNumber > 0 ? (
+                    <Pressable style={styles.tertiaryButton} onPress={generateAiMonthPlanner}>
+                      <Text style={styles.tertiaryButtonText}>
+                        {!hasPremiumAccess ? 'AI starter' : 'Suggest'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
                 <View style={styles.chipWrap}>
                   {quickStartPresets.map((preset) => {
                     const theme = categoryThemes[preset.themeId];
@@ -7166,7 +7311,7 @@ export default function App() {
                   </View>
                 ) : null}
 
-                {showCategorySubcategories || categorySubcategoriesText.trim() ? (
+                {isCategoryDetailsOpen ? (
                   <View style={styles.formShell}>
                     <View style={[styles.fieldCard, styles.fieldWide]}>
                       <Text style={styles.fieldLabel}>Subcategories</Text>
@@ -7186,21 +7331,16 @@ export default function App() {
                 ) : null}
 
                 <View style={styles.categoryHelperRow}>
-                  {!showCategorySubcategories ? (
-                    <Pressable
-                      style={[styles.secondaryButton, styles.categoryToolButton]}
-                      onPress={() => setShowCategorySubcategories(true)}
-                    >
-                      <Text style={styles.secondaryButtonText}>Add subcategories</Text>
-                    </Pressable>
-                  ) : null}
-
                   <Pressable
                     style={[styles.secondaryButton, styles.categoryToolButton]}
-                    onPress={() => setShowCategoryAdvanced((current) => !current)}
+                    onPress={() => {
+                      const next = !isCategoryDetailsOpen;
+                      setShowCategorySubcategories(next);
+                      setShowCategoryAdvanced(next);
+                    }}
                   >
                     <Text style={styles.secondaryButtonText}>
-                      {showCategoryAdvanced ? 'Hide more options' : 'More options'}
+                      {isCategoryDetailsOpen ? 'Hide details' : 'Add details'}
                     </Text>
                   </Pressable>
                 </View>
@@ -7338,12 +7478,10 @@ export default function App() {
 
                 <View style={styles.formDivider} />
 
-                <View style={styles.sectionHeader}>
+                <View style={[styles.sectionHeader, styles.sectionHeaderStacked]}>
                   <View style={styles.sectionHeaderCopy}>
                     <Text style={styles.sectionTitle}>Current categories</Text>
-                    <Text style={styles.sectionSubtitle}>
-                      Keep essentials visible at the top, then tighten or rename lanes as the plan takes shape.
-                    </Text>
+                    <Text style={styles.sectionSubtitle}>Open the list only when you want to edit a lane.</Text>
                   </View>
 
                   <View style={styles.headerActionStack}>
@@ -7391,7 +7529,7 @@ export default function App() {
                       {categorySummaries.length} categories in this month
                     </Text>
                     <Text style={styles.planCollapsedSummaryText}>
-                      {formatCurrency(totalPlanned)} assigned across the current plan. Open the list only when you want to edit, duplicate, or trim lanes.
+                      {formatCurrency(totalPlanned)} assigned. Keep the list closed unless you want to edit, duplicate, or trim lanes.
                     </Text>
                   </View>
                 ) : null}
@@ -8554,9 +8692,19 @@ export default function App() {
                       <Text style={styles.fieldLabel}>Subcategories</Text>
                       <View style={styles.chipWrap}>
                         {selectedCategoryDetail.subcategories.map((subcategory) => (
-                          <View key={subcategory} style={styles.subcategoryPill}>
-                            <Text style={styles.subcategoryPillText}>{subcategory}</Text>
-                          </View>
+                          <Pressable
+                            key={subcategory}
+                            style={[styles.subcategoryPill, styles.subcategoryActionPill]}
+                            onPress={() => {
+                              const nextCategoryId = selectedCategoryDetail.id;
+                              closeCategoryDetail();
+                              openExpenseCapture(nextCategoryId, null, subcategory);
+                            }}
+                          >
+                            <Text style={[styles.subcategoryPillText, styles.subcategoryActionPillText]}>
+                              + {subcategory}
+                            </Text>
+                          </Pressable>
                         ))}
                       </View>
                     </>
@@ -8594,10 +8742,12 @@ export default function App() {
                         <View key={transaction.id} style={styles.categoryDetailTransactionRow}>
                           <View style={styles.categoryDetailTransactionCopy}>
                             <Text style={styles.categoryDetailTransactionTitle}>
-                              {transaction.note.trim() || selectedCategoryDetail.name}
+                              {getTransactionDisplayTitle(transaction, selectedCategoryDetail.name)}
                             </Text>
                             <Text style={styles.categoryDetailTransactionMeta}>
-                              {formatTransactionDate(transaction.happenedAt, localeTag)}
+                              {[formatTransactionDate(transaction.happenedAt, localeTag), transaction.subcategory]
+                                .filter(Boolean)
+                                .join(' · ')}
                             </Text>
                           </View>
                           <Text style={styles.categoryDetailTransactionAmount}>
@@ -9317,6 +9467,11 @@ const createStyles = (
       flex: 1,
       minWidth: 0,
     },
+    sectionHeaderStacked: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      gap: 8,
+    },
     headerActionStack: {
       flexDirection: 'row',
       flexWrap: 'wrap',
@@ -9335,6 +9490,37 @@ const createStyles = (
       flexWrap: 'wrap',
       gap: 8,
       marginBottom: 14,
+    },
+    planSummaryStrip: {
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      backgroundColor: theme.surfaceMuted,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginBottom: 14,
+      gap: 3,
+    },
+    planSummaryStripGood: {
+      backgroundColor: theme.successSurface,
+      borderColor: theme.successSurface,
+    },
+    planSummaryStripAlert: {
+      backgroundColor: theme.alertSurface,
+      borderColor: theme.alertSurface,
+    },
+    planSummaryStripNeutral: {
+      backgroundColor: theme.surfaceMuted,
+    },
+    planSummaryTitle: {
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '800',
+    },
+    planSummaryMeta: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
     },
     planCompactStatusPill: {
       backgroundColor: theme.surfaceMuted,
@@ -9658,6 +9844,35 @@ const createStyles = (
       padding: 12,
       marginBottom: 12,
     },
+    accountStatusGrid: {
+      flexDirection: isCompact ? 'column' : 'row',
+      gap: 10,
+      marginBottom: 12,
+    },
+    accountStatusTile: {
+      flex: 1,
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      padding: 12,
+      gap: 4,
+    },
+    accountStatusLabel: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    accountStatusValue: {
+      color: theme.text,
+      fontSize: 17,
+      fontWeight: '800',
+    },
+    accountStatusMeta: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+    },
     accountCopy: {
       gap: 5,
     },
@@ -9677,6 +9892,15 @@ const createStyles = (
       borderColor: theme.divider,
       padding: 12,
       marginTop: 12,
+    },
+    accountPromptCard: {
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      padding: 12,
+      marginBottom: 12,
+      gap: 6,
     },
     accountDeletionTitle: {
       color: theme.text,
@@ -10739,10 +10963,18 @@ const createStyles = (
       paddingVertical: 3,
       backgroundColor: theme.surfaceStrong,
     },
+    subcategoryActionPill: {
+      borderWidth: 1,
+      borderColor: theme.accentBorder,
+      backgroundColor: theme.surfaceTint,
+    },
     subcategoryPillText: {
       color: theme.textMuted,
       fontSize: 8,
       fontWeight: '700',
+    },
+    subcategoryActionPillText: {
+      color: theme.accentText,
     },
     categoryTone: {
       alignSelf: 'flex-start',

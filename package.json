@@ -8,7 +8,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:ios": "npx eas build --platform ios --profile production",
+    "submit:ios": "npx eas submit --platform ios --profile production"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.1.2",
@@ -25,6 +27,7 @@
     "pdfjs-dist": "^3.11.174",
     "react": "19.0.0",
     "react-native": "0.79.2",
+    "react-native-purchases": "^9.15.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

@@ -99,6 +99,7 @@ import {
 } from './dataTransfer';
 import {
   createBudgetPasswordAccount,
+  deleteBudgetUserAccount,
   getBudgetAiExpenseAssist,
   getBudgetAiImportCleanup,
   getBudgetAiMonthPlanner,
@@ -106,6 +107,7 @@ import {
   getBudgetAiMonthlyReview,
   loadBudgetCloudState,
   saveBudgetCloudState,
+  sendBudgetPasswordReset,
   signInBudgetPasswordUser,
   signOutBudgetUser,
   subscribeToBudgetAuth,
@@ -115,6 +117,16 @@ import {
   type BudgetAiMonthlyReviewResponse,
   type BudgetAuthUser,
 } from './firebaseClient';
+import {
+  getPurchaseSnapshot,
+  initializePurchases,
+  openSubscriptionManagement,
+  purchasePremiumPackage,
+  restorePremiumPurchases,
+  subscribeToPurchaseState,
+  type PremiumPackageOption,
+  type PurchaseSnapshot,
+} from './purchaseClient';
 
 type SaveState = 'hydrating' | 'saving' | 'saved' | 'error';
 type CloudState = 'connecting' | 'syncing' | 'synced' | 'local-only';
@@ -129,6 +141,15 @@ type InsightSpendMode = 'all' | 'adjustable';
 type AlertTone = 'good' | 'warning' | 'alert';
 type BudgetSetupStep = 'limit' | 'categories' | 'review';
 type CategoryBucketMode = 'auto' | 'manual';
+type LocaleSheetMode = 'currency' | 'language';
+type PaywallSource =
+  | 'setup_complete'
+  | 'ai_review'
+  | 'ai_expense_assist'
+  | 'ai_import_cleanup'
+  | 'ai_starter_plan'
+  | 'backup_toggle'
+  | 'settings_upgrade';
 
 type InsightMonthSummary = {
   id: string;
@@ -196,6 +217,48 @@ type InsightSummary = {
   trendDelta: number | null;
 };
 
+const PREMIUM_PAYWALL_DISMISS_KEY = 'budget-buddy:premium-paywall-dismissed:v1';
+const QUICK_START_PRESET_COUNT = 3;
+const MAX_RECENT_EXPENSE_TEMPLATES = 4;
+const MAX_RECENT_CATEGORY_SHORTCUTS = 4;
+
+const paywallSourceMeta: Record<
+  PaywallSource,
+  {
+    title: string;
+    subtitle: string;
+  }
+> = {
+  ai_expense_assist: {
+    title: 'Unlock smarter expense suggestions',
+    subtitle: 'Use Gemini to suggest the right category, account, and repeat flag before you save.',
+  },
+  ai_import_cleanup: {
+    title: 'Unlock AI cleanup review',
+    subtitle: 'Review imported categories, recurring tags, and naming inconsistencies before they spread.',
+  },
+  ai_review: {
+    title: 'Unlock AI monthly review',
+    subtitle: 'Get a sharper month-end read that separates fixed recurring load from flexible spend.',
+  },
+  ai_starter_plan: {
+    title: 'Unlock AI starter plan',
+    subtitle: 'Pull likely category lanes from earlier months, then keep only the ones that still fit.',
+  },
+  backup_toggle: {
+    title: 'Unlock recoverable backup',
+    subtitle: 'Keep budgeting free and local, then turn on Firebase backup only when you want reinstall recovery.',
+  },
+  settings_upgrade: {
+    title: 'Upgrade to Budget Buddy Premium',
+    subtitle: 'Unlock AI budgeting help and optional Firebase backup without changing the local-first core app.',
+  },
+  setup_complete: {
+    title: 'Keep the budget working harder for you',
+    subtitle: 'The month is ready. Premium adds AI reviews, smarter suggestions, and recoverable backup when you need it.',
+  },
+};
+
 type ForecastAlert = {
   tone: AlertTone;
   title: string;
@@ -242,17 +305,17 @@ const budgetSetupStepMeta: Record<
   limit: {
     label: 'Budget',
     title: 'Budget amount',
-    subtitle: 'Set the monthly amount first. Categories and subcategories come next.',
+    subtitle: 'Set the amount first.',
   },
   categories: {
     label: 'Categories',
-    title: 'Add categories and subcategories',
-    subtitle: 'Start broad, then add subcategories whenever you want more detail.',
+    title: 'Categories',
+    subtitle: 'Start broad, then add detail only when needed.',
   },
   review: {
     label: 'Review',
-    title: 'Check the setup',
-    subtitle: 'Look for missing savings, oversized lanes, and whether the month is balanced.',
+    title: 'Review',
+    subtitle: 'Check the balance before you start spending.',
   },
 };
 
@@ -1066,12 +1129,19 @@ const getAuthErrorMessage = (error: unknown) => {
   switch (code) {
     case 'auth/email-already-in-use':
       return 'That email already has an account. Sign in instead.';
+    case 'auth/missing-email':
     case 'auth/invalid-email':
       return 'Enter a valid email address.';
+    case 'auth/missing-password':
+      return 'Enter your password to continue.';
     case 'auth/invalid-credential':
     case 'auth/wrong-password':
     case 'auth/user-not-found':
       return 'Those sign-in details did not match an account.';
+    case 'auth/requires-recent-login':
+      return 'Sign in again and confirm your password before deleting the account.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled. Use another account or reset access.';
     case 'auth/weak-password':
       return 'Use a password with at least 6 characters.';
     case 'auth/too-many-requests':
@@ -1096,11 +1166,27 @@ export default function App() {
   const [cloudState, setCloudState] = useState<CloudState>('connecting');
   const [authUser, setAuthUser] = useState<BudgetAuthUser | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [purchaseSnapshot, setPurchaseSnapshot] = useState<PurchaseSnapshot>(() =>
+    getPurchaseSnapshot(),
+  );
+  const [isPaywallVisible, setIsPaywallVisible] = useState(false);
+  const [paywallSource, setPaywallSource] = useState<PaywallSource>('settings_upgrade');
+  const [paywallBusyAction, setPaywallBusyAction] = useState<string | null>(null);
+  const [paywallStatus, setPaywallStatus] = useState('');
+  const [hasLoadedPaywallDismissal, setHasLoadedPaywallDismissal] = useState(false);
+  const [isPaywallDismissed, setIsPaywallDismissed] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>('create');
+  const [showAuthComposer, setShowAuthComposer] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [authConfirmPassword, setAuthConfirmPassword] = useState('');
   const [authStatus, setAuthStatus] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
+  const [showDeleteAccountPrompt, setShowDeleteAccountPrompt] = useState(false);
+  const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
+  const [showDeleteAccountPassword, setShowDeleteAccountPassword] = useState(false);
+  const [deleteAccountBusy, setDeleteAccountBusy] = useState(false);
   const [activeScreen, setActiveScreen] = useState<ScreenId>('home');
 
   const [expenseAmount, setExpenseAmount] = useState('');
@@ -1144,9 +1230,9 @@ export default function App() {
   const [showTransactionTools, setShowTransactionTools] = useState(false);
   const [showAllTransactions, setShowAllTransactions] = useState(false);
   const [activityScope, setActivityScope] = useState<ActivityScope>('month');
-  const [isCurrencyDropdownOpen, setIsCurrencyDropdownOpen] = useState(false);
-  const [isLanguageDropdownOpen, setIsLanguageDropdownOpen] = useState(false);
   const [isThemeSheetOpen, setIsThemeSheetOpen] = useState(false);
+  const [isLocaleSheetOpen, setIsLocaleSheetOpen] = useState(false);
+  const [localeSheetMode, setLocaleSheetMode] = useState<LocaleSheetMode>('currency');
   const [currencySearchQuery, setCurrencySearchQuery] = useState('');
   const [languageSearchQuery, setLanguageSearchQuery] = useState('');
   const [activeSettingsSection, setActiveSettingsSection] =
@@ -1178,13 +1264,13 @@ export default function App() {
 
   const latestStateRef = useRef(appState);
   const bootstrappedUserIdRef = useRef<string | null>(null);
-  const pendingGuestResetRef = useRef(false);
+  const setupPaywallPromptShownRef = useRef(false);
   const { width } = useWindowDimensions();
   const isCompact = width < 430;
   const isNarrow = width < 375;
   const contentHorizontalPadding = isCompact ? 14 : 18;
   const cardHorizontalPadding = 14;
-  const swipeRailWidth = 108;
+  const swipeRailWidth = 96;
   const swipeViewportWidth = Math.max(
     220,
     width - contentHorizontalPadding * 2 - cardHorizontalPadding * 2,
@@ -1316,6 +1402,32 @@ export default function App() {
   }, [appState]);
 
   useEffect(() => {
+    let isActive = true;
+
+    const hydratePaywallDismissal = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(PREMIUM_PAYWALL_DISMISS_KEY);
+
+        if (isActive) {
+          setIsPaywallDismissed(stored === '1');
+        }
+      } finally {
+        if (isActive) {
+          setHasLoadedPaywallDismissal(true);
+        }
+      }
+    };
+
+    void hydratePaywallDismissal();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  useEffect(() => subscribeToPurchaseState(setPurchaseSnapshot), []);
+
+  useEffect(() => {
     const unsubscribe = subscribeToBudgetAuth((nextUser) => {
       setAuthUser(nextUser);
       setIsAuthReady(true);
@@ -1323,6 +1435,36 @@ export default function App() {
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (authUser?.email) {
+      setAuthEmail(authUser.email.toLowerCase());
+    }
+  }, [authUser?.email]);
+
+  useEffect(() => {
+    if (!isAuthReady) {
+      return;
+    }
+
+    let isActive = true;
+
+    const syncPurchases = async () => {
+      const snapshot = await initializePurchases(
+        authUser && !authUser.isAnonymous ? authUser.uid : null,
+      );
+
+      if (isActive) {
+        setPurchaseSnapshot(snapshot);
+      }
+    };
+
+    void syncPurchases();
+
+    return () => {
+      isActive = false;
+    };
+  }, [authUser?.isAnonymous, authUser?.uid, isAuthReady]);
 
   useEffect(() => {
     if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -1417,6 +1559,10 @@ export default function App() {
   const essentialQuickPresets = useMemo(
     () => quickPresets.filter((preset) => preset.bucket === 'needs').slice(0, 4),
     [],
+  );
+  const quickStartPresets = useMemo(
+    () => essentialQuickPresets.slice(0, QUICK_START_PRESET_COUNT),
+    [essentialQuickPresets],
   );
 
   const categorySummaries = useMemo(
@@ -1557,8 +1703,8 @@ export default function App() {
     activeMonth.categories.length === 0 && !editingCategoryId ? 'Add the first category' : 'Build the categories';
   const categoryCreationSubtitle =
     activeMonth.categories.length === 0 && !editingCategoryId
-      ? 'Start with one broad category like rent, groceries, transport, or bills.'
-      : 'Keep it light: name, amount, then add detail only when a category needs it.';
+      ? 'Start with one broad category like rent or groceries.'
+      : 'Name it, add the amount, then move on.';
   const categoryQuickStatus =
     monthlyLimitNumber > 0 && categoryDraftIsValid && projectedAllocationDelta !== null
       ? projectedAllocationDelta >= 0
@@ -1652,7 +1798,7 @@ export default function App() {
         },
   ];
   const isBudgetSetupReady = monthlyLimitNumber > 0 && activeMonth.categories.length > 0;
-  const isBudgetSetupComplete = isBudgetSetupReady && Math.abs(allocationDifference) < 0.01;
+  const isBudgetSetupComplete = isBudgetSetupReady && Math.abs(allocationDifference) <= 1;
   const budgetSetupSummary = isBudgetSetupReady
     ? `Planned ${formatCurrency(totalPlanned)} across ${activeMonth.categories.length} categories in ${activeMonthName}.`
     : 'Add a monthly limit and at least one category to finish the setup.';
@@ -1663,6 +1809,27 @@ export default function App() {
       ? `Savings ${formatCurrency(savingsBucketSummary.planned)}`
       : 'No savings lane yet',
   ];
+  useEffect(() => {
+    if (
+      !hasLoadedPaywallDismissal ||
+      isPaywallDismissed ||
+      setupPaywallPromptShownRef.current ||
+      purchaseSnapshot.purchaseState === 'loading' ||
+      purchaseSnapshot.premiumStatus === 'premium' ||
+      !isBudgetSetupComplete
+    ) {
+      return;
+    }
+
+    setupPaywallPromptShownRef.current = true;
+    openPremiumPaywall('setup_complete');
+  }, [
+    hasLoadedPaywallDismissal,
+    isBudgetSetupComplete,
+    isPaywallDismissed,
+    purchaseSnapshot.premiumStatus,
+    purchaseSnapshot.purchaseState,
+  ]);
   const aiReviewHistoryMonths = useMemo(
     () =>
       sortedMonths
@@ -2053,8 +2220,8 @@ export default function App() {
       ? insightSummary.currencyCodes.join(' + ')
       : `${insightSummary.currencyCodes.length} currencies`;
   const weeklyInsightSubtitle = isCurrentMonth
-    ? 'All four weeks now sit in one compact row. Each column shows the actual weekly total, split into fixed recurring and flexible spend.'
-    : 'This closed month view keeps all four weeks in one compact row while still separating fixed recurring and flexible spend.';
+    ? 'Actual weekly totals, split into fixed and flexible spend.'
+    : 'Closed months keep the same four-week split.';
   const insightRangeLead = insightSummary.topAdjustableCategory
     ? `${insightSummary.topAdjustableCategory.name} is the biggest adjustable category in this window.`
     : insightSummary.isMixedCurrency
@@ -2064,22 +2231,55 @@ export default function App() {
       : 'Import or track more months to unlock a clearer long-range pattern.';
   const longRangeSubtitle =
     insightSummary.months.length < insightWindowTargetMonths
-      ? `This ${insightWindowMeta[insightWindow].label.toLowerCase()} view is based on ${insightWindowCoverageText}, so treat it as an early directional read.`
+      ? `${insightWindowMeta[insightWindow].label} view based on ${insightWindowCoverageText}.`
       : insightSummary.isMixedCurrency
-        ? `This window mixes ${insightCurrencySummaryLabel}. The charts use each month's own currency for labels and compare plan usage ratios instead of fake combined totals.`
-      : insightSpendMode === 'adjustable'
-        ? 'Adjustable view hides fixed recurring baseline so you can judge what is actually moveable.'
-        : 'Review fixed vs flexible patterns across the full window.';
+        ? `${insightCurrencySummaryLabel} in this window, so the view compares plan usage instead of merging totals.`
+        : insightSpendMode === 'adjustable'
+        ? 'Adjustable view hides fixed baseline costs.'
+        : 'Fixed and flexible patterns across the full window.';
   const insightRangeSubtitle =
     insightSummary.isMixedCurrency
       ? insightSpendMode === 'adjustable'
-        ? 'Adjustable view compares flexible-spend share within each month because currencies differ across the window.'
-        : 'Each bar shows how much of that month plan was used, with fixed and flexible spend split inside the fill.'
+        ? 'Flexible-spend share within each month.'
+        : 'Each bar shows that month against plan, split by fixed and flexible spend.'
       : insightSpendMode === 'adjustable'
         ? insightSummary.topAdjustableCategory
-          ? `${insightSummary.topAdjustableCategory.name} is the biggest adjustable category in this window.`
-          : 'Showing adjustable spend only. Fixed recurring costs are excluded from these bars.'
+        ? `${insightSummary.topAdjustableCategory.name} is the biggest adjustable category in this window.`
+          : 'Showing adjustable spend only.'
         : insightRangeLead;
+  const insightDecisionCards = [
+    {
+      label: 'Fixed baseline',
+      value: insightSummary.isMixedCurrency
+        ? `${Math.round(insightSummary.averageFixedShareRatio * 100)}%`
+        : formatCurrency(
+            insightSpendMode === 'adjustable'
+              ? insightSummary.averageMonthlyFixedSpend
+              : insightSummary.averageMonthlyFixedSpend,
+          ),
+      meta: insightSummary.isMixedCurrency
+        ? 'Average fixed share across tracked months'
+        : 'Average recurring load each month',
+    },
+    {
+      label: insightSpendMode === 'adjustable' ? 'Adjustable avg' : 'Flexible avg',
+      value: insightSummary.isMixedCurrency
+        ? `${Math.round(insightSummary.averageAdjustableUsageRatio * 100)}%`
+        : formatCurrency(insightSummary.averageMonthlyFlexibleSpend),
+      meta: insightSummary.isMixedCurrency
+        ? 'Average adjustable share of each monthly plan'
+        : 'Average day-to-day spend each month',
+    },
+    {
+      label: 'Best place to act',
+      value: insightSummary.topAdjustableCategory?.name ?? 'No clear hotspot',
+      meta: insightSummary.topAdjustableCategory
+        ? insightSummary.isMixedCurrency
+          ? 'Largest adjustable category across tracked months'
+          : `${formatCurrency(insightSummary.topAdjustableCategory.spent)} in this window`
+        : 'Most spending so far is fixed or there is not enough flexible history yet.',
+    },
+  ] as const;
   const activeAiReview = aiReviewByMonthId[activeMonth.id] ?? null;
   const activeAiReviewError = aiReviewErrorByMonthId[activeMonth.id] ?? '';
   const aiReviewBusy = aiReviewBusyMonthId === activeMonth.id;
@@ -2175,6 +2375,58 @@ export default function App() {
           ).slice(0, 5)
         : [],
     [activeMonth.transactions, selectedCategoryDetailId],
+  );
+  const recentExpenseTemplates = useMemo(() => {
+    const templates: Transaction[] = [];
+    const seenKeys = new Set<string>();
+
+    for (const transaction of sortTransactions(activeMonth.transactions, 'recent')) {
+      const key = [
+        transaction.categoryId,
+        transaction.accountId ?? '',
+        transaction.recurring ? '1' : '0',
+        transaction.note.trim().toLowerCase(),
+      ].join(':');
+
+      if (seenKeys.has(key)) {
+        continue;
+      }
+
+      seenKeys.add(key);
+      templates.push(transaction);
+
+      if (templates.length >= MAX_RECENT_EXPENSE_TEMPLATES) {
+        break;
+      }
+    }
+
+    return templates;
+  }, [activeMonth.transactions]);
+  const recentExpenseCategoryIds = useMemo(() => {
+    const ids: string[] = [];
+    const seenIds = new Set<string>();
+
+    for (const transaction of sortTransactions(activeMonth.transactions, 'recent')) {
+      if (seenIds.has(transaction.categoryId)) {
+        continue;
+      }
+
+      seenIds.add(transaction.categoryId);
+      ids.push(transaction.categoryId);
+
+      if (ids.length >= MAX_RECENT_CATEGORY_SHORTCUTS) {
+        break;
+      }
+    }
+
+    return ids;
+  }, [activeMonth.transactions]);
+  const recentExpenseCategories = useMemo(
+    () =>
+      recentExpenseCategoryIds
+        .map((categoryId) => activeMonth.categories.find((category) => category.id === categoryId) ?? null)
+        .filter((category): category is Category => Boolean(category)),
+    [activeMonth.categories, recentExpenseCategoryIds],
   );
 
   const filteredTransactions = useMemo(() => {
@@ -2324,93 +2576,264 @@ export default function App() {
       ? `Forecast +${formatCurrency(forecastSnapshot.dominantCategory.projectedDelta)} above plan`
       : `${onTrackCount}/${categorySummaries.length || 0} categories on track`;
 
-  const saveMessage =
-    saveState === 'hydrating'
-      ? 'Restoring your budget...'
-      : saveState === 'saving'
-        ? 'Saving locally...'
-        : saveState === 'error'
-          ? 'Local save failed.'
-          : cloudState === 'connecting'
-            ? 'Saved locally. Connecting to Firebase...'
-            : cloudState === 'syncing'
-              ? 'Saving locally and to Firebase...'
-              : cloudState === 'local-only'
-                ? 'Saved locally. Cloud sync is unavailable.'
-                : 'Saved locally and to Firebase.';
-  const screenMeta: Record<ScreenId, { label: string; navIcon: string; title: string; subtitle: string }> = {
+  const screenMeta: Record<ScreenId, { label: string; title: string; subtitle: string }> = {
     home: {
       label: 'Budget',
-      navIcon: 'B',
-      title: 'Current budget',
-      subtitle: 'Keep the first screen centered on this month, the categories, and what needs attention.',
+      title: 'Budget',
+      subtitle: 'This month, left and next steps.',
     },
     spend: {
       label: 'Activity',
-      navIcon: 'A',
-      title: 'Activity and transactions',
-      subtitle: 'Add expenses quickly, then search, sort, and clean up the ledger.',
+      title: 'Activity',
+      subtitle: 'Log and review expenses.',
     },
     plan: {
       label: 'Plan',
-      navIcon: 'P',
-      title: 'Shape the budget',
-      subtitle: 'Manage categories, recurring plans, and savings goals.',
+      title: 'Plan',
+      subtitle: 'Categories, limits, and goals.',
     },
     insights: {
       label: 'Insights',
-      navIcon: 'I',
-      title: 'Zoom out on the trend',
-      subtitle: 'Review quarter, 6-month, and yearly patterns with clearer suggestions.',
+      title: 'Insights',
+      subtitle: 'Pace, trends, and reviews.',
     },
     settings: {
       label: 'Settings',
-      navIcon: 'S',
-      title: 'Account, themes, and data',
-      subtitle: 'Choose the app look and move data in and out in safer formats.',
+      title: 'Settings',
+      subtitle: 'Look, account, backup, and data.',
     },
   };
   const screenTabs: ScreenId[] = ['home', 'spend', 'plan', 'insights', 'settings'];
+  const isSignedIn = Boolean(authUser && !authUser.isAnonymous);
+  const premiumStatus = purchaseSnapshot.premiumStatus;
+  const purchaseState = purchaseSnapshot.purchaseState;
+  const hasPremiumAccess = premiumStatus === 'premium';
+  const annualPremiumPackage =
+    purchaseSnapshot.packages.find((option) => option.kind === 'annual') ??
+    purchaseSnapshot.packages[0] ??
+    null;
+  const monthlyPremiumPackage =
+    purchaseSnapshot.packages.find((option) => option.kind === 'monthly') ??
+    purchaseSnapshot.packages.find((option) => option.id !== annualPremiumPackage?.id) ??
+    null;
+  const cloudBackupEnabled = appState.preferences.cloudBackupEnabled;
+  const shouldUseCloudBackup = cloudBackupEnabled && isSignedIn && hasPremiumAccess;
   const accountLabel =
     authUser && !authUser.isAnonymous && authUser.email ? authUser.email : 'Guest mode';
+  const premiumStatusLabel =
+    purchaseState === 'loading'
+      ? 'Checking premium'
+      : hasPremiumAccess
+        ? 'Premium active'
+        : 'Free plan';
+  const premiumStatusMeta =
+    purchaseState === 'error'
+      ? purchaseSnapshot.lastError ?? 'Premium is not connected yet.'
+      : hasPremiumAccess
+        ? 'AI features and optional Firebase backup are unlocked for this install.'
+        : 'Core budgeting stays free. AI tools and recoverable backup are part of Premium.';
+  const authEmailNormalized = authEmail.trim().toLowerCase();
+  const authStatusIsError =
+    /could not|did not|enter |at least 6|must match|failed|too many|not enabled|invalid|network/i.test(
+      authStatus,
+    );
   const authStatusColor =
-    authStatus.includes('failed') || authStatus.includes('could not') || authStatus.includes('did not')
-      ? currentTheme.alertText
-      : currentTheme.accentText;
-  const settingsOverview = [
-    `${currentTheme.name} theme`,
-    currentCurrencyCode,
-    currentLanguageOption?.label ?? currentLanguageCode.toUpperCase(),
-    `${bankAccounts.length} account${bankAccounts.length === 1 ? '' : 's'}`,
-    authUser?.isAnonymous ? 'Guest mode' : 'Signed in',
-  ].join(' • ');
+    authStatusIsError ? currentTheme.alertText : currentTheme.accentText;
+  const authPrimaryDisabled =
+    authBusy ||
+    !authEmailNormalized ||
+    authPassword.length < 6 ||
+    (authMode === 'create' && authPassword !== authConfirmPassword);
+  const accountManagementBusy = authBusy || deleteAccountBusy;
+  const authModeHighlights =
+    authMode === 'create'
+      ? ['Keep this guest budget', 'Sync across devices']
+      : ['Load your saved budget', 'Use the linked email'];
+  const cloudBackupMessage =
+    saveState === 'error'
+      ? 'Local save failed on this device. Check storage space, then try again.'
+      : !hasPremiumAccess
+        ? 'Firebase backup is a Premium feature. The app stays local-only until Premium is active.'
+      : !cloudBackupEnabled
+      ? 'Local-only mode is active. Turn on Firebase backup only if you want recovery after reinstall or on another device.'
+      : !isSignedIn
+        ? 'Premium is active, but recoverable backup still needs you to create an account or sign in.'
+        : cloudState === 'connecting'
+          ? 'Checking Firebase backup for this account...'
+          : cloudState === 'syncing'
+            ? 'Saving the latest backup to Firebase...'
+            : cloudState === 'synced'
+              ? 'Firebase backup is up to date for this account.'
+              : 'Firebase backup is unavailable right now. Your local copy is still safe on this device.';
   const settingsSections: Array<{ id: SettingsSection; label: string }> = [
     { id: 'appearance', label: 'Look' },
     { id: 'locale', label: 'Locale' },
     { id: 'accounts', label: 'Accounts' },
-    { id: 'cloud', label: 'Login' },
+    { id: 'cloud', label: 'Account' },
     { id: 'data', label: 'Data' },
   ];
 
+  useEffect(() => {
+    if (!isHydrated || !cloudBackupEnabled || purchaseState !== 'ready' || hasPremiumAccess) {
+      return;
+    }
+
+    updateAppState((current) => ({
+      ...current,
+      preferences: {
+        ...current.preferences,
+        cloudBackupEnabled: false,
+      },
+    }));
+    setCloudState('local-only');
+    setAuthStatus('Firebase backup now needs Premium. This device stays local-only until Premium is active again.');
+  }, [cloudBackupEnabled, hasPremiumAccess, isHydrated, purchaseState]);
+
   const activateSettingsSection = (section: SettingsSection) => {
     if (section !== 'locale') {
-      setIsCurrencyDropdownOpen(false);
-      setIsLanguageDropdownOpen(false);
       setCurrencySearchQuery('');
       setLanguageSearchQuery('');
     }
 
     setActiveSettingsSection(section);
   };
+  const animateUi = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+  };
+  const navigateToScreen = (screen: ScreenId) => {
+    animateUi();
+    setActiveScreen(screen);
+  };
+
+  const dismissPaywall = async () => {
+    setIsPaywallVisible(false);
+    setPaywallBusyAction(null);
+    setPaywallStatus('');
+
+    if (isPaywallDismissed) {
+      return;
+    }
+
+    setIsPaywallDismissed(true);
+
+    try {
+      await AsyncStorage.setItem(PREMIUM_PAYWALL_DISMISS_KEY, '1');
+    } catch {
+      // Keep going even if the dismissal flag could not be persisted.
+    }
+  };
+
+  const openPremiumPaywall = (source: PaywallSource) => {
+    setPaywallSource(source);
+    setPaywallStatus('');
+    setPaywallBusyAction(null);
+    setIsPaywallVisible(true);
+  };
+
+  const handleManageSubscription = async () => {
+    try {
+      await openSubscriptionManagement();
+    } catch {
+      setPaywallStatus('Subscription management could not be opened right now.');
+    }
+  };
+
+  const handlePremiumPurchaseResult = async (nextSnapshot: PurchaseSnapshot) => {
+    setPurchaseSnapshot(nextSnapshot);
+    setPaywallStatus('');
+
+    if (paywallSource === 'backup_toggle') {
+      activateSettingsSection('cloud');
+      navigateToScreen('settings');
+
+      if (!isSignedIn) {
+        setAuthStatus('Premium is active. Sign in or create an account to make Firebase backup recoverable.');
+        setIsPaywallVisible(false);
+        return;
+      }
+
+      updateAppState((current) => ({
+        ...current,
+        preferences: {
+          ...current.preferences,
+          cloudBackupEnabled: true,
+        },
+      }));
+      setAuthStatus('Premium is active. Firebase backup can now stay on for this account.');
+    }
+
+    await dismissPaywall();
+  };
+
+  const purchasePremiumAccess = async (selectedPackage: PremiumPackageOption | null) => {
+    if (!selectedPackage) {
+      setPaywallStatus('Premium packages are not ready yet. Finish the RevenueCat setup and try again.');
+      return;
+    }
+
+    setPaywallBusyAction(selectedPackage.id);
+    setPaywallStatus('');
+
+    try {
+      const nextSnapshot = await purchasePremiumPackage(selectedPackage.id);
+      await handlePremiumPurchaseResult(nextSnapshot);
+    } catch (error) {
+      setPaywallStatus(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Premium purchase could not be completed.',
+      );
+    } finally {
+      setPaywallBusyAction(null);
+    }
+  };
+
+  const restorePremiumAccess = async () => {
+    setPaywallBusyAction('restore');
+    setPaywallStatus('');
+
+    try {
+      const nextSnapshot = await restorePremiumPurchases();
+
+      if (nextSnapshot.premiumStatus !== 'premium') {
+        setPurchaseSnapshot(nextSnapshot);
+        setPaywallStatus('No active Premium subscription was found to restore.');
+        return;
+      }
+
+      await handlePremiumPurchaseResult(nextSnapshot);
+    } catch (error) {
+      setPaywallStatus(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Purchases could not be restored right now.',
+      );
+    } finally {
+      setPaywallBusyAction(null);
+    }
+  };
 
   const openThemePicker = () => {
     setIsThemeSheetOpen(true);
     activateSettingsSection('appearance');
-    setActiveScreen('settings');
+    navigateToScreen('settings');
   };
 
   const closeThemePicker = () => {
     setIsThemeSheetOpen(false);
+  };
+
+  const openLocalePicker = (mode: LocaleSheetMode) => {
+    setLocaleSheetMode(mode);
+    activateSettingsSection('locale');
+    setIsLocaleSheetOpen(true);
+    navigateToScreen('settings');
+  };
+
+  const closeLocalePicker = () => {
+    setIsLocaleSheetOpen(false);
+    setCurrencySearchQuery('');
+    setLanguageSearchQuery('');
   };
 
   const closeAccountSheet = () => {
@@ -2429,7 +2852,7 @@ export default function App() {
     }
 
     activateSettingsSection('accounts');
-    setActiveScreen('settings');
+    navigateToScreen('settings');
     setIsAccountSheetOpen(true);
   };
 
@@ -2463,8 +2886,28 @@ export default function App() {
 
     setIsExpenseSheetOpen(true);
     if (nextScreen) {
-      setActiveScreen(nextScreen);
+      navigateToScreen(nextScreen);
     }
+  };
+
+  const selectExpenseCategory = (categoryId: string) => {
+    const category = activeMonth.categories.find((item) => item.id === categoryId);
+
+    setExpenseCategoryId(categoryId);
+    if (category) {
+      setExpenseRecurring(category.recurring);
+    }
+  };
+
+  const applyExpenseTemplate = (transaction: Transaction) => {
+    setExpenseAmount(String(Number(transaction.amount.toFixed(2))));
+    setExpenseNote(transaction.note);
+    setExpenseCategoryId(transaction.categoryId);
+    setExpenseAccountId(transaction.accountId ?? bankAccounts[0]?.id ?? '');
+    setExpenseRecurring(transaction.recurring);
+    setExpenseDate(getDefaultExpenseDate(activeMonth.id));
+    setExpenseAiSuggestion(null);
+    setExpenseAiError('');
   };
 
   const openCategoryDetail = (categoryId: string) => {
@@ -2505,6 +2948,41 @@ export default function App() {
     setEditingGoalId(null);
   };
 
+  const addQuickStartCategories = () => {
+    if (!activeMonth || quickStartPresets.length === 0) {
+      return;
+    }
+
+    const existingNames = new Set(
+      activeMonth.categories.map((category) => category.name.trim().toLowerCase()),
+    );
+    const missingPresets = quickStartPresets.filter(
+      (preset) => !existingNames.has(preset.name.trim().toLowerCase()),
+    );
+
+    if (missingPresets.length === 0) {
+      setPlanSetupStep('categories');
+      return;
+    }
+
+    updateActiveMonth((month) => ({
+      ...month,
+      categories: [
+        ...month.categories,
+        ...missingPresets.map((preset) => ({
+          id: createId('cat'),
+          name: preset.name,
+          planned: preset.planned,
+          subcategories: [],
+          bucket: preset.bucket,
+          recurring: preset.recurring,
+          themeId: preset.themeId,
+        })),
+      ],
+    }));
+    setPlanSetupStep('categories');
+  };
+
   const updateAppTheme = (themeId: AppThemeId) => {
     if (appState.preferences.appThemeId === themeId) {
       setIsThemeSheetOpen(false);
@@ -2523,13 +3001,13 @@ export default function App() {
 
   const updateCurrencyCode = (currencyCode: CurrencyCode) => {
     if (appState.preferences.currencyCode === currencyCode) {
-      setIsCurrencyDropdownOpen(false);
       setCurrencySearchQuery('');
+      setIsLocaleSheetOpen(false);
       return;
     }
 
-    setIsCurrencyDropdownOpen(false);
     setCurrencySearchQuery('');
+    setIsLocaleSheetOpen(false);
     updateAppState((current) => ({
       ...current,
       months: current.months.map((month) =>
@@ -2548,25 +3026,15 @@ export default function App() {
     }));
   };
 
-  const toggleCurrencyDropdown = () => {
-    setIsCurrencyDropdownOpen((current) => {
-      if (current) {
-        setCurrencySearchQuery('');
-      }
-
-      return !current;
-    });
-  };
-
   const updateLanguageCode = (languageCode: LanguageCode) => {
     if (appState.preferences.languageCode === languageCode) {
-      setIsLanguageDropdownOpen(false);
       setLanguageSearchQuery('');
+      setIsLocaleSheetOpen(false);
       return;
     }
 
-    setIsLanguageDropdownOpen(false);
     setLanguageSearchQuery('');
+    setIsLocaleSheetOpen(false);
     updateAppState((current) => ({
       ...current,
       preferences: {
@@ -2577,18 +3045,51 @@ export default function App() {
     }));
   };
 
-  const toggleLanguageDropdown = () => {
-    setIsLanguageDropdownOpen((current) => {
-      if (current) {
-        setLanguageSearchQuery('');
+  const setCloudBackupEnabled = (enabled: boolean) => {
+    if (enabled) {
+      if (!hasPremiumAccess) {
+        openPremiumPaywall('backup_toggle');
+        return;
       }
 
-      return !current;
-    });
+      if (!isSignedIn) {
+        activateSettingsSection('cloud');
+        navigateToScreen('settings');
+        setShowAuthComposer(true);
+        setAuthMode('create');
+        setAuthStatus('Create an account or sign in first, then turn on Firebase backup.');
+        return;
+      }
+    }
+
+    updateAppState((current) => ({
+      ...current,
+      preferences: {
+        ...current.preferences,
+        cloudBackupEnabled: enabled,
+      },
+    }));
+    setAuthStatus(
+      enabled
+        ? 'Firebase backup enabled for this signed-in Premium account.'
+        : 'Firebase backup paused. This budget stays local on this device.',
+    );
+  };
+
+  const setAuthModeWithReset = (mode: AuthMode) => {
+    setAuthMode(mode);
+    setShowAuthComposer(true);
+    setAuthStatus('');
+    setAuthPassword('');
+    setAuthConfirmPassword('');
+    setShowAuthPassword(false);
+    setShowDeleteAccountPrompt(false);
+    setDeleteAccountPassword('');
+    setShowDeleteAccountPassword(false);
   };
 
   const submitAuthAction = async () => {
-    const normalizedEmail = authEmail.trim().toLowerCase();
+    const normalizedEmail = authEmailNormalized;
 
     if (!normalizedEmail || !normalizedEmail.includes('@')) {
       setAuthStatus('Enter a valid email address.');
@@ -2600,6 +3101,11 @@ export default function App() {
       return;
     }
 
+    if (authMode === 'create' && authPassword !== authConfirmPassword) {
+      setAuthStatus('Passwords must match to create the account.');
+      return;
+    }
+
     setAuthBusy(true);
     setAuthStatus('');
 
@@ -2607,16 +3113,25 @@ export default function App() {
       if (authMode === 'create') {
         const result = await createBudgetPasswordAccount(normalizedEmail, authPassword);
         setAuthStatus(
-          result.linkedGuest
-            ? 'Account created. This guest budget is now attached to your login.'
-            : 'Account created. Your budget will now follow this login.',
+          cloudBackupEnabled
+            ? result.linkedGuest
+              ? 'Account created. This guest budget is now attached to your login and can back up to Firebase.'
+              : 'Account created. Your budget can now back up to Firebase when needed.'
+            : 'Account created. Turn on Firebase backup if you want reinstall recovery.',
         );
       } else {
         await signInBudgetPasswordUser(normalizedEmail, authPassword);
-        setAuthStatus('Signed in. Loading your saved budget...');
+        setAuthStatus(
+          cloudBackupEnabled
+            ? 'Signed in. Checking the Firebase backup for this account...'
+            : 'Signed in. Local-only mode stays on until you enable Firebase backup.',
+        );
       }
 
       setAuthPassword('');
+      setAuthConfirmPassword('');
+      setShowAuthPassword(false);
+      setShowAuthComposer(false);
     } catch (error) {
       setAuthStatus(getAuthErrorMessage(error));
     } finally {
@@ -2624,19 +3139,85 @@ export default function App() {
     }
   };
 
+  const requestAuthPasswordReset = async (emailOverride?: string) => {
+    const normalizedEmail = (emailOverride ?? authEmail).trim().toLowerCase();
+
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      setAuthStatus('Enter the account email first, then request a reset link.');
+      return;
+    }
+
+    setAuthBusy(true);
+    setAuthStatus('');
+
+    try {
+      await sendBudgetPasswordReset(normalizedEmail);
+      setAuthStatus(`Password reset link sent to ${normalizedEmail}.`);
+    } catch (error) {
+      setAuthStatus(getAuthErrorMessage(error));
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const toggleDeleteAccountPrompt = () => {
+    setShowDeleteAccountPrompt((current) => !current);
+    setDeleteAccountPassword('');
+    setShowDeleteAccountPassword(false);
+    setAuthStatus('');
+  };
+
+  const submitDeleteAccount = async () => {
+    if (!deleteAccountPassword.trim()) {
+      setAuthStatus('Enter your password to continue.');
+      return;
+    }
+
+    setDeleteAccountBusy(true);
+    setAuthStatus('');
+    bootstrappedUserIdRef.current = null;
+
+    try {
+      await deleteBudgetUserAccount(deleteAccountPassword);
+      updateAppState((current) => ({
+        ...current,
+        preferences: {
+          ...current.preferences,
+          cloudBackupEnabled: false,
+        },
+      }));
+      setAuthMode('create');
+      setAuthEmail('');
+      setAuthPassword('');
+      setAuthConfirmPassword('');
+      setDeleteAccountPassword('');
+      setShowAuthPassword(false);
+      setShowDeleteAccountPassword(false);
+      setShowDeleteAccountPrompt(false);
+      setAuthStatus('Account deleted. The budget on this device stays local unless you sign in again.');
+    } catch (error) {
+      setAuthStatus(getAuthErrorMessage(error));
+    } finally {
+      setDeleteAccountBusy(false);
+    }
+  };
+
   const switchToGuestMode = async () => {
     setAuthBusy(true);
     setAuthStatus('');
-    pendingGuestResetRef.current = true;
     bootstrappedUserIdRef.current = null;
 
     try {
       await signOutBudgetUser();
       setAuthMode('signin');
       setAuthPassword('');
-      setAuthStatus('Signed out. Starting a fresh guest session...');
+      setAuthConfirmPassword('');
+      setShowAuthPassword(false);
+      setShowDeleteAccountPrompt(false);
+      setDeleteAccountPassword('');
+      setShowDeleteAccountPassword(false);
+      setAuthStatus('Signed out. This device stays local-only until you sign in again.');
     } catch (error) {
-      pendingGuestResetRef.current = false;
       setAuthStatus(getAuthErrorMessage(error));
     } finally {
       setAuthBusy(false);
@@ -2644,7 +3225,7 @@ export default function App() {
   };
 
   const updateAppState = (producer: (current: BudgetAppState) => BudgetAppState) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    animateUi();
     setAppState((current) =>
       ensureCurrentMonth(
         {
@@ -2668,16 +3249,6 @@ export default function App() {
       ),
     }));
   };
-
-  useEffect(() => {
-    if (!isAuthReady || authUser) {
-      return;
-    }
-
-    void ensureBudgetCloudUser().catch(() => {
-      setCloudState('local-only');
-    });
-  }, [authUser, isAuthReady]);
 
   useEffect(() => {
     let isActive = true;
@@ -2717,7 +3288,21 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isHydrated || !isAuthReady || !authUser || bootstrappedUserIdRef.current === authUser.uid) {
+    if (!cloudBackupEnabled || !isSignedIn) {
+      bootstrappedUserIdRef.current = null;
+      setCloudState('local-only');
+      return;
+    }
+  }, [cloudBackupEnabled, isSignedIn]);
+
+  useEffect(() => {
+    if (
+      !isHydrated ||
+      !isAuthReady ||
+      !authUser ||
+      !shouldUseCloudBackup ||
+      bootstrappedUserIdRef.current === authUser.uid
+    ) {
       return;
     }
 
@@ -2737,21 +3322,7 @@ export default function App() {
           new Date(),
         );
         const remoteState = normalizeBudgetAppState(remoteRaw, new Date());
-        const fallbackLocalState =
-          pendingGuestResetRef.current && authUser.isAnonymous
-            ? {
-                ...createInitialBudgetState(new Date()),
-                preferences: {
-                  appThemeId: latestStateRef.current.preferences.appThemeId,
-                  currencyCode: latestStateRef.current.preferences.currencyCode,
-                  languageCode: latestStateRef.current.preferences.languageCode,
-                  recentCurrencyCodes: latestStateRef.current.preferences.recentCurrencyCodes,
-                  recentLanguageCodes: latestStateRef.current.preferences.recentLanguageCodes,
-                },
-              }
-            : latestStateRef.current;
-
-        pendingGuestResetRef.current = false;
+        const fallbackLocalState = latestStateRef.current;
 
         const selectedState =
           userLocalState && remoteState
@@ -2791,7 +3362,7 @@ export default function App() {
     return () => {
       isActive = false;
     };
-  }, [authUser, isAuthReady, isHydrated]);
+  }, [authUser, isAuthReady, isHydrated, shouldUseCloudBackup]);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -2826,6 +3397,7 @@ export default function App() {
       !isHydrated ||
       !isAuthReady ||
       !authUser?.uid ||
+      !shouldUseCloudBackup ||
       bootstrappedUserIdRef.current !== authUser.uid
     ) {
       return;
@@ -2849,7 +3421,7 @@ export default function App() {
     return () => {
       clearTimeout(timeoutId);
     };
-  }, [appState, authUser?.uid, isAuthReady, isHydrated]);
+  }, [appState, authUser?.uid, isAuthReady, isHydrated, shouldUseCloudBackup]);
 
   useEffect(() => {
     if (!activeMonth) {
@@ -3043,6 +3615,11 @@ export default function App() {
   };
 
   const generateAiMonthlyReview = async () => {
+    if (!hasPremiumAccess) {
+      openPremiumPaywall('ai_review');
+      return;
+    }
+
     if (activeMonth.categories.length === 0) {
       setAiReviewErrorByMonthId((current) => ({
         ...current,
@@ -3086,6 +3663,11 @@ export default function App() {
   };
 
   const generateAiExpenseAssist = async () => {
+    if (!hasPremiumAccess) {
+      openPremiumPaywall('ai_expense_assist');
+      return;
+    }
+
     if (activeMonth.categories.length === 0) {
       setExpenseAiError('Add at least one category before asking AI to classify an expense.');
       return;
@@ -3140,6 +3722,11 @@ export default function App() {
   };
 
   const generateAiImportCleanup = async () => {
+    if (!hasPremiumAccess) {
+      openPremiumPaywall('ai_import_cleanup');
+      return;
+    }
+
     if (aiImportCleanupPayload.categories.length === 0) {
       setImportCleanupError('Add or import categories first so the cleanup review has something to inspect.');
       return;
@@ -3171,6 +3758,11 @@ export default function App() {
   };
 
   const generateAiMonthPlanner = async () => {
+    if (!hasPremiumAccess) {
+      openPremiumPaywall('ai_starter_plan');
+      return;
+    }
+
     if (monthlyLimitNumber <= 0) {
       setMonthPlannerErrorByMonthId((current) => ({
         ...current,
@@ -3281,13 +3873,13 @@ export default function App() {
   const openBudgetBuilder = () => {
     resetCategoryForm();
     setPlanSetupStep(activeMonth.categories.length > 0 || monthlyLimitNumber > 0 ? 'categories' : suggestedPlanSetupStep);
-    setActiveScreen('plan');
+    navigateToScreen('plan');
   };
 
   const openPlanCategories = () => {
     resetCategoryForm();
     setPlanSetupStep(monthlyLimitNumber > 0 ? 'categories' : 'limit');
-    setActiveScreen('plan');
+    navigateToScreen('plan');
   };
 
   const startBudgetSetup = () => {
@@ -3325,7 +3917,7 @@ export default function App() {
         (Number(copiedMonth.monthlyLimit) || 0) - getTotalPlanned(copiedMonth),
       ),
     );
-    setActiveScreen('plan');
+    navigateToScreen('plan');
   };
 
   const copyPreviousBudgetIntoActiveMonth = () => {
@@ -3447,7 +4039,7 @@ export default function App() {
     setExpenseRecurring(transaction.recurring);
     setShowExpenseDatePicker(false);
     setIsExpenseSheetOpen(true);
-    setActiveScreen('spend');
+    navigateToScreen('spend');
   };
 
   const deleteTransaction = (transactionId: string) => {
@@ -3544,7 +4136,7 @@ export default function App() {
     setCategoryThemeId(category.themeId);
     setShowCategoryAdvanced(true);
     setPlanSetupStep('categories');
-    setActiveScreen('plan');
+    navigateToScreen('plan');
   };
 
   const applyCategoryPlanSuggestion = (amount: number) => {
@@ -3595,7 +4187,7 @@ export default function App() {
     setCategoryThemeId(category.themeId);
     setShowCategoryAdvanced(false);
     setPlanSetupStep('categories');
-    setActiveScreen('plan');
+    navigateToScreen('plan');
     closeInlineSubcategoryEditor();
   };
 
@@ -3683,7 +4275,7 @@ export default function App() {
     setGoalTarget(String(goal.target));
     setGoalSaved(String(goal.saved));
     setGoalThemeId(goal.themeId);
-    setActiveScreen('plan');
+    navigateToScreen('plan');
   };
 
   const deleteGoal = (goalId: string) => {
@@ -3721,7 +4313,7 @@ export default function App() {
     resetAccountForm();
     setImportCleanupReview(null);
     setImportCleanupError('');
-    setActiveScreen('home');
+    navigateToScreen('home');
     Alert.alert('Import complete', successMessage);
   };
 
@@ -3998,6 +4590,31 @@ export default function App() {
           </View>
         </View>
 
+        {recentExpenseTemplates.length > 0 ? (
+          <View style={styles.filterGroup}>
+            <Text style={styles.filterGroupLabel}>Repeat recent</Text>
+            <View style={styles.filterRowCompact}>
+              {recentExpenseTemplates.map((transaction) => {
+                const category =
+                  activeMonth.categories.find((item) => item.id === transaction.categoryId) ?? null;
+                const label = transaction.note.trim() || category?.name || 'Recent expense';
+
+                return (
+                  <Pressable
+                    key={transaction.id}
+                    style={styles.ghostButton}
+                    onPress={() => applyExpenseTemplate(transaction)}
+                  >
+                    <Text style={styles.ghostButtonText}>
+                      {label} · {formatCurrency(transaction.amount)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
         <View style={styles.formShell}>
           <View style={styles.fieldCard}>
             <Text style={styles.fieldLabel}>Amount</Text>
@@ -4029,29 +4646,41 @@ export default function App() {
           <Pressable
             style={[
               styles.tertiaryButton,
-              (expenseAiBusy ||
-                !expenseAiAssistPayload.note ||
-                expenseAiAssistPayload.amount <= 0) &&
+              (hasPremiumAccess &&
+                (expenseAiBusy ||
+                  !expenseAiAssistPayload.note ||
+                  expenseAiAssistPayload.amount <= 0)) &&
                 styles.buttonDisabled,
             ]}
             onPress={generateAiExpenseAssist}
             disabled={
-              expenseAiBusy || !expenseAiAssistPayload.note || expenseAiAssistPayload.amount <= 0
+              hasPremiumAccess &&
+              (expenseAiBusy || !expenseAiAssistPayload.note || expenseAiAssistPayload.amount <= 0)
             }
           >
             <Text style={styles.tertiaryButtonText}>
-              {expenseAiBusy ? 'Checking...' : 'Suggest from note'}
+              {!hasPremiumAccess
+                ? 'Unlock AI suggestion'
+                : expenseAiBusy
+                  ? 'Checking...'
+                  : 'AI assist'}
             </Text>
           </Pressable>
 
-          {expenseAiSuggestion ? (
+          {hasPremiumAccess && expenseAiSuggestion ? (
             <Pressable style={styles.secondaryButton} onPress={applyExpenseAiSuggestion}>
-              <Text style={styles.secondaryButtonText}>Apply suggestion</Text>
+              <Text style={styles.secondaryButtonText}>Use AI match</Text>
             </Pressable>
           ) : null}
         </View>
 
-        {expenseAiSuggestion ? (
+        {!hasPremiumAccess ? (
+          <Text style={styles.selectorHint}>
+            Premium can read the note and suggest the category, account, and repeat flag.
+          </Text>
+        ) : null}
+
+        {hasPremiumAccess && expenseAiSuggestion ? (
           <View style={styles.suggestionCard}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionHeaderCopy}>
@@ -4091,7 +4720,7 @@ export default function App() {
           </View>
         ) : null}
 
-        {expenseAiError ? <Text style={styles.aiReviewErrorText}>{expenseAiError}</Text> : null}
+        {hasPremiumAccess && expenseAiError ? <Text style={styles.aiReviewErrorText}>{expenseAiError}</Text> : null}
 
         <View style={styles.formShell}>
           <Pressable
@@ -4156,6 +4785,28 @@ export default function App() {
         )}
 
         <Text style={styles.fieldLabel}>Category</Text>
+        {recentExpenseCategories.length > 0 ? (
+          <View style={styles.filterGroup}>
+            <Text style={styles.filterGroupLabel}>Recent lanes</Text>
+            <View style={styles.filterRowCompact}>
+              {recentExpenseCategories.map((category) => {
+                const selected = category.id === expenseCategoryId;
+
+                return (
+                  <Pressable
+                    key={category.id}
+                    style={[styles.filterChip, selected && styles.filterChipActive]}
+                    onPress={() => selectExpenseCategory(category.id)}
+                  >
+                    <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
+                      {category.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
         <View style={styles.chipWrap}>
           {activeMonth.categories.map((category) => {
             const theme = categoryThemes[category.themeId];
@@ -4168,12 +4819,7 @@ export default function App() {
                   { backgroundColor: theme.chip },
                   category.id === expenseCategoryId && styles.selectionChipActive,
                 ]}
-                onPress={() => {
-                  setExpenseCategoryId(category.id);
-                  if (!editingTransactionId) {
-                    setExpenseRecurring(category.recurring);
-                  }
-                }}
+                onPress={() => selectExpenseCategory(category.id)}
               >
                 <Text
                   style={[
@@ -4282,14 +4928,222 @@ export default function App() {
     </>
   );
 
+  const renderPremiumPlanCard = (
+    premiumPackage: PremiumPackageOption | null,
+    { primary }: { primary: boolean },
+  ) => {
+    if (!premiumPackage) {
+      return null;
+    }
+
+    const isBusy = paywallBusyAction === premiumPackage.id;
+
+    return (
+      <Pressable
+        key={premiumPackage.id}
+        style={[
+          styles.paywallPlanCard,
+          primary && styles.paywallPlanCardPrimary,
+          isBusy && styles.buttonDisabled,
+        ]}
+        onPress={() => {
+          void purchasePremiumAccess(premiumPackage);
+        }}
+        disabled={Boolean(paywallBusyAction)}
+      >
+        <View style={styles.paywallPlanHeader}>
+          <View style={styles.paywallPlanCopy}>
+            <Text style={[styles.paywallPlanTitle, primary && styles.paywallPlanTitlePrimary]}>
+              {premiumPackage.title}
+            </Text>
+            <Text style={styles.paywallPlanPrice}>{premiumPackage.priceLabel}</Text>
+            {premiumPackage.perMonthLabel ? (
+              <Text style={styles.paywallPlanMeta}>
+                {premiumPackage.kind === 'annual'
+                  ? `${premiumPackage.perMonthLabel} per month, billed yearly`
+                  : `${premiumPackage.perMonthLabel} per month`}
+              </Text>
+            ) : null}
+          </View>
+
+          {premiumPackage.highlight ? (
+            <View
+              style={[
+                styles.paywallPlanBadge,
+                primary && styles.paywallPlanBadgePrimary,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.paywallPlanBadgeText,
+                  primary && styles.paywallPlanBadgeTextPrimary,
+                ]}
+              >
+                {premiumPackage.highlight}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        <Text style={styles.paywallPlanDescription}>{premiumPackage.description}</Text>
+
+        <View style={[styles.paywallPlanButton, primary && styles.paywallPlanButtonPrimary]}>
+          <Text style={[styles.paywallPlanButtonText, primary && styles.paywallPlanButtonTextPrimary]}>
+            {isBusy ? 'Working...' : primary ? 'Start yearly' : 'Choose monthly'}
+          </Text>
+        </View>
+      </Pressable>
+    );
+  };
+
+  const renderPremiumPaywall = () => {
+    const paywallMeta = paywallSourceMeta[paywallSource];
+    const paywallFeatures = [
+      'AI-powered monthly review',
+      'Smarter expense suggestions',
+      'Import cleanup and starter-plan help',
+      'Recoverable Firebase backup after reinstall',
+    ];
+    const secondaryPackage =
+      annualPremiumPackage?.id === monthlyPremiumPackage?.id ? null : monthlyPremiumPackage;
+
+    return (
+      <Modal
+        animationType="slide"
+        transparent
+        visible={isPaywallVisible}
+        onRequestClose={() => {
+          void dismissPaywall();
+        }}
+      >
+        <View style={styles.sheetBackdrop}>
+          <Pressable
+            style={styles.sheetDismissArea}
+            onPress={() => {
+              void dismissPaywall();
+            }}
+          />
+          <View style={styles.sheetCard}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.paywallHero}>
+              <View style={styles.paywallHeroCopy}>
+                <Text style={styles.paywallEyebrow}>Budget Buddy Premium</Text>
+                <Text style={styles.paywallTitle}>{paywallMeta.title}</Text>
+                <Text style={styles.paywallSubtitle}>{paywallMeta.subtitle}</Text>
+              </View>
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => {
+                  void dismissPaywall();
+                }}
+              >
+                <Text style={styles.secondaryButtonText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView
+              style={styles.sheetScroll}
+              contentContainerStyle={styles.sheetContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.compactHighlightRow}>
+                <View style={styles.compactHighlightChip}>
+                  <Text style={styles.compactHighlightText}>Core budgeting stays free</Text>
+                </View>
+                {purchaseSnapshot.currentOfferingDescription ? (
+                  <View style={styles.compactHighlightChip}>
+                    <Text style={styles.compactHighlightText}>
+                      {purchaseSnapshot.currentOfferingDescription}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+
+              <View style={styles.paywallFeatureList}>
+                {paywallFeatures.map((feature) => (
+                  <View key={feature} style={styles.paywallFeatureRow}>
+                    <View style={styles.paywallFeatureDot} />
+                    <Text style={styles.paywallFeatureText}>{feature}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {annualPremiumPackage || secondaryPackage ? (
+                <View style={styles.paywallPlanStack}>
+                  {renderPremiumPlanCard(annualPremiumPackage ?? secondaryPackage, {
+                    primary: true,
+                  })}
+                  {annualPremiumPackage && secondaryPackage
+                    ? renderPremiumPlanCard(secondaryPackage, { primary: false })
+                    : null}
+                </View>
+              ) : (
+                <View style={styles.emptyStateCompact}>
+                  <Text style={styles.emptyTitle}>Premium packages not ready</Text>
+                  <Text style={styles.emptyText}>
+                    Finish the RevenueCat setup, then reopen this screen to load the monthly and yearly offers.
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.actionRow}>
+                <Pressable
+                  style={[styles.tertiaryButton, paywallBusyAction === 'restore' && styles.buttonDisabled]}
+                  onPress={restorePremiumAccess}
+                  disabled={paywallBusyAction === 'restore'}
+                >
+                  <Text style={styles.tertiaryButtonText}>
+                    {paywallBusyAction === 'restore' ? 'Restoring...' : 'Restore purchases'}
+                  </Text>
+                </Pressable>
+
+                <Pressable style={styles.tertiaryButton} onPress={handleManageSubscription}>
+                  <Text style={styles.tertiaryButtonText}>Manage subscription</Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.selectorHint}>
+                Billing is handled by Apple. Premium covers AI reviews, AI helpers, and optional Firebase backup.
+              </Text>
+
+              {purchaseState === 'error' && purchaseSnapshot.lastError ? (
+                <Text style={styles.aiReviewErrorText}>{purchaseSnapshot.lastError}</Text>
+              ) : null}
+
+              {paywallStatus ? <Text style={styles.aiReviewErrorText}>{paywallStatus}</Text> : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   const renderSettingsScreen = () => (
     <>
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Open one area at a time</Text>
-        <Text style={styles.sectionSubtitle}>
-          Keep Settings lighter by focusing on one control lane instead of one long page.
-        </Text>
-        <Text style={styles.settingsOverviewText}>{settingsOverview}</Text>
+        <View style={styles.sectionHeader}>
+          <View style={styles.sectionHeaderCopy}>
+            <Text style={styles.sectionTitle}>Preferences</Text>
+            <Text style={styles.sectionSubtitle}>Look, locale, accounts, backup, and data.</Text>
+          </View>
+
+          {!hasPremiumAccess ? (
+            <Pressable style={styles.tertiaryButton} onPress={() => openPremiumPaywall('settings_upgrade')}>
+              <Text style={styles.tertiaryButtonText}>Upgrade</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        <View style={styles.compactHighlightRow}>
+          <View style={styles.compactHighlightChip}>
+            <Text style={styles.compactHighlightText}>{premiumStatusLabel}</Text>
+          </View>
+          <View style={styles.compactHighlightChip}>
+            <Text style={styles.compactHighlightText}>
+              {hasPremiumAccess ? 'Premium access' : 'Core budgeting free'}
+            </Text>
+          </View>
+        </View>
 
         <View style={styles.settingsSectionRow}>
           {settingsSections.map((section) => {
@@ -4321,9 +5175,7 @@ export default function App() {
       {activeSettingsSection === 'appearance' ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Theme</Text>
-          <Text style={styles.sectionSubtitle}>
-            Keep the app look calm and consistent without taking over the workspace.
-          </Text>
+          <Text style={styles.sectionSubtitle}>Subtle, low-noise themes.</Text>
 
           <Pressable
             style={[
@@ -4358,311 +5210,37 @@ export default function App() {
       {activeSettingsSection === 'locale' ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Currency and language</Text>
-          <Text style={styles.sectionSubtitle}>
-            Choose the defaults the app should use for budgets, exports, dates, and number formatting.
-          </Text>
+          <Text style={styles.sectionSubtitle}>Defaults for budgets, exports, and dates.</Text>
 
-          <Text style={styles.fieldLabel}>Default budget currency</Text>
-          <Text style={styles.selectorHint}>
-            {currentCurrencyOption
-              ? `Using ${currentCurrencyOption.label} (${currentCurrencyOption.code}) for budgets, reports, and forecasts.`
-              : 'Pick the currency you want new budgets and exports to use.'}
-          </Text>
           <Pressable
-            style={[
-              styles.selectorDropdownTrigger,
-              isCurrencyDropdownOpen && styles.selectorDropdownTriggerActive,
-            ]}
-            onPress={toggleCurrencyDropdown}
+            style={styles.selectorDropdownTrigger}
+            onPress={() => openLocalePicker('currency')}
           >
             <View style={styles.selectorDropdownCopy}>
-              <Text style={styles.selectorDropdownTitle}>
-                {currentCurrencyOption?.label ?? 'Choose a currency'}
-              </Text>
+              <Text style={styles.selectorDropdownTitle}>Default budget currency</Text>
               <Text style={styles.selectorDropdownMeta}>
                 {currentCurrencyOption
                   ? `${currentCurrencyOption.code} • ${currentCurrencyOption.description}`
-                  : 'Browse the full currency list'}
+                  : 'Choose the default for new budgets, exports, and reports'}
               </Text>
             </View>
-            <Text style={styles.selectorDropdownState}>
-              {isCurrencyDropdownOpen ? 'Hide' : 'Browse'}
-            </Text>
+            <Text style={styles.selectorDropdownState}>Change</Text>
           </Pressable>
 
-          {isCurrencyDropdownOpen ? (
-            <View style={styles.selectorDropdownPanel}>
-              <View style={[styles.fieldCard, styles.fieldWide, styles.selectorSearchCard]}>
-                <Text style={styles.fieldLabel}>Search currencies</Text>
-                <TextInput
-                  value={currencySearchQuery}
-                  onChangeText={setCurrencySearchQuery}
-                  placeholder="Search by code, name, or symbol"
-                  placeholderTextColor={currentTheme.placeholder}
-                  style={styles.fieldInput}
-                />
-              </View>
-
-              <ScrollView
-                nestedScrollEnabled
-                showsVerticalScrollIndicator={false}
-                style={styles.selectorDropdownScroll}
-              >
-                {!normalizedCurrencySearchQuery ? (
-                  <>
-                    <Text style={styles.selectorGroupLabel}>Main picks</Text>
-                    <View style={styles.filterRow}>
-                      {featuredCurrencyOptions.map((option) => {
-                        const selected = currentCurrencyCode === option.code;
-
-                        return (
-                          <Pressable
-                            key={option.code}
-                            style={[styles.filterChip, selected && styles.filterChipActive]}
-                            onPress={() => updateCurrencyCode(option.code)}
-                          >
-                            <Text
-                              style={[styles.filterChipText, selected && styles.filterChipTextActive]}
-                            >
-                              {option.code}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-
-                    {recentCurrencyOptions.length > 0 ? (
-                      <>
-                        <Text style={styles.selectorGroupLabel}>Recently used</Text>
-                        <View style={styles.filterRow}>
-                          {recentCurrencyOptions.map((option) => {
-                            const selected = currentCurrencyCode === option.code;
-
-                            return (
-                              <Pressable
-                                key={option.code}
-                                style={[styles.filterChip, selected && styles.filterChipActive]}
-                                onPress={() => updateCurrencyCode(option.code)}
-                              >
-                                <Text
-                                  style={[
-                                    styles.filterChipText,
-                                    selected && styles.filterChipTextActive,
-                                  ]}
-                                >
-                                  {option.code}
-                                </Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      </>
-                    ) : null}
-                  </>
-                ) : null}
-
-                <Text style={styles.selectorGroupLabel}>
-                  {normalizedCurrencySearchQuery ? 'Matches' : 'All currencies'}
-                </Text>
-                <View style={styles.selectorList}>
-                  {visibleCurrencyOptions.length > 0 ? (
-                    visibleCurrencyOptions.map((option) => {
-                      const selected = currentCurrencyCode === option.code;
-
-                      return (
-                        <Pressable
-                          key={option.code}
-                          style={[styles.selectorRow, selected && styles.selectorRowActive]}
-                          onPress={() => updateCurrencyCode(option.code)}
-                        >
-                          <View style={styles.selectorRowCopy}>
-                            <Text
-                              style={[
-                                styles.selectorRowTitle,
-                                selected && styles.selectorRowTitleActive,
-                              ]}
-                            >
-                              {option.label}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.selectorRowMeta,
-                                selected && styles.selectorRowMetaActive,
-                              ]}
-                            >
-                              {option.description}
-                            </Text>
-                          </View>
-                          <Text
-                            style={[
-                              styles.selectorRowCode,
-                              selected && styles.selectorRowCodeActive,
-                            ]}
-                          >
-                            {option.code}
-                          </Text>
-                        </Pressable>
-                      );
-                    })
-                  ) : (
-                    <Text style={styles.selectorEmptyText}>No currencies matched that search.</Text>
-                  )}
-                </View>
-              </ScrollView>
-            </View>
-          ) : null}
-
-          <View style={styles.formDivider} />
-
-          <Text style={styles.fieldLabel}>Language</Text>
-          <Text style={styles.selectorHint}>
-            {currentLanguageOption
-              ? `Using ${currentLanguageOption.label} for date, month, and number formatting across the app.`
-              : 'Pick the language that should drive date and number formatting.'}
-          </Text>
           <Pressable
-            style={[
-              styles.selectorDropdownTrigger,
-              isLanguageDropdownOpen && styles.selectorDropdownTriggerActive,
-            ]}
-            onPress={toggleLanguageDropdown}
+            style={styles.selectorDropdownTrigger}
+            onPress={() => openLocalePicker('language')}
           >
             <View style={styles.selectorDropdownCopy}>
-              <Text style={styles.selectorDropdownTitle}>
-                {currentLanguageOption?.label ?? 'Choose a language'}
-              </Text>
+              <Text style={styles.selectorDropdownTitle}>Language</Text>
               <Text style={styles.selectorDropdownMeta}>
                 {currentLanguageOption
                   ? `${currentLanguageOption.code.toUpperCase()} • ${getLocaleTag(currentLanguageOption.code)}`
-                  : 'Browse the full language list'}
+                  : 'Choose the locale used for dates and number formatting'}
               </Text>
             </View>
-            <Text style={styles.selectorDropdownState}>
-              {isLanguageDropdownOpen ? 'Hide' : 'Browse'}
-            </Text>
+            <Text style={styles.selectorDropdownState}>Change</Text>
           </Pressable>
-
-          {isLanguageDropdownOpen ? (
-            <View style={styles.selectorDropdownPanel}>
-              <View style={[styles.fieldCard, styles.fieldWide, styles.selectorSearchCard]}>
-                <Text style={styles.fieldLabel}>Search languages</Text>
-                <TextInput
-                  value={languageSearchQuery}
-                  onChangeText={setLanguageSearchQuery}
-                  placeholder="Search by language or locale"
-                  placeholderTextColor={currentTheme.placeholder}
-                  style={styles.fieldInput}
-                />
-              </View>
-
-              <ScrollView
-                nestedScrollEnabled
-                showsVerticalScrollIndicator={false}
-                style={styles.selectorDropdownScroll}
-              >
-                {!normalizedLanguageSearchQuery ? (
-                  <>
-                    <Text style={styles.selectorGroupLabel}>Main picks</Text>
-                    <View style={styles.filterRow}>
-                      {featuredLanguageOptions.map((option) => {
-                        const selected = currentLanguageCode === option.code;
-
-                        return (
-                          <Pressable
-                            key={option.code}
-                            style={[styles.filterChip, selected && styles.filterChipActive]}
-                            onPress={() => updateLanguageCode(option.code)}
-                          >
-                            <Text
-                              style={[styles.filterChipText, selected && styles.filterChipTextActive]}
-                            >
-                              {option.label}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-
-                    {recentLanguageOptions.length > 0 ? (
-                      <>
-                        <Text style={styles.selectorGroupLabel}>Recently used</Text>
-                        <View style={styles.filterRow}>
-                          {recentLanguageOptions.map((option) => {
-                            const selected = currentLanguageCode === option.code;
-
-                            return (
-                              <Pressable
-                                key={option.code}
-                                style={[styles.filterChip, selected && styles.filterChipActive]}
-                                onPress={() => updateLanguageCode(option.code)}
-                              >
-                                <Text
-                                  style={[
-                                    styles.filterChipText,
-                                    selected && styles.filterChipTextActive,
-                                  ]}
-                                >
-                                  {option.label}
-                                </Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      </>
-                    ) : null}
-                  </>
-                ) : null}
-
-                <Text style={styles.selectorGroupLabel}>
-                  {normalizedLanguageSearchQuery ? 'Matches' : 'All languages'}
-                </Text>
-                <View style={styles.selectorList}>
-                  {visibleLanguageOptions.length > 0 ? (
-                    visibleLanguageOptions.map((option) => {
-                      const selected = currentLanguageCode === option.code;
-
-                      return (
-                        <Pressable
-                          key={option.code}
-                          style={[styles.selectorRow, selected && styles.selectorRowActive]}
-                          onPress={() => updateLanguageCode(option.code)}
-                        >
-                          <View style={styles.selectorRowCopy}>
-                            <Text
-                              style={[
-                                styles.selectorRowTitle,
-                                selected && styles.selectorRowTitleActive,
-                              ]}
-                            >
-                              {option.label}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.selectorRowMeta,
-                                selected && styles.selectorRowMetaActive,
-                              ]}
-                            >
-                              {`Locale ${getLocaleTag(option.code)}`}
-                            </Text>
-                          </View>
-                          <Text
-                            style={[
-                              styles.selectorRowCode,
-                              selected && styles.selectorRowCodeActive,
-                            ]}
-                          >
-                            {option.code.toUpperCase()}
-                          </Text>
-                        </Pressable>
-                      );
-                    })
-                  ) : (
-                    <Text style={styles.selectorEmptyText}>No languages matched that search.</Text>
-                  )}
-                </View>
-              </ScrollView>
-            </View>
-          ) : null}
 
           <View style={styles.localePreviewCard}>
             <Text style={styles.localePreviewTitle}>Locale preview</Text>
@@ -4678,9 +5256,7 @@ export default function App() {
           <View style={styles.sectionHeader}>
             <View style={styles.sectionHeaderCopy}>
               <Text style={styles.sectionTitle}>Bank accounts</Text>
-              <Text style={styles.sectionSubtitle}>
-                Add the accounts you actually use, then tag them by the roles they serve for you.
-              </Text>
+              <Text style={styles.sectionSubtitle}>Optional accounts for tagging spend.</Text>
             </View>
 
             <Pressable style={styles.tertiaryButton} onPress={() => openAccountSheet()}>
@@ -4695,7 +5271,7 @@ export default function App() {
               </Text>
               <Text style={styles.accountMeta}>
                 {bankAccounts.length === 0
-                  ? 'Keep accounts optional. Add them when you want expenses tagged by where they were paid from.'
+                  ? 'Add accounts only when you want expense origin tags.'
                   : `${bankAccounts.reduce(
                       (sum, account) => sum + (accountUsageCounts.get(account.id) ?? 0),
                       0,
@@ -4707,7 +5283,7 @@ export default function App() {
           {bankAccounts.length === 0 ? (
             <View style={styles.emptyStateCompact}>
               <Text style={styles.selectorHint}>
-                No bank accounts added yet. Add the ones you use for recurring bills, daily spending, and savings.
+                No accounts yet. Add the ones you want available in expense entry.
               </Text>
               <Pressable style={styles.secondaryButton} onPress={() => openAccountSheet()}>
                 <Text style={styles.secondaryButtonText}>Add bank account</Text>
@@ -4783,107 +5359,338 @@ export default function App() {
 
       {activeSettingsSection === 'cloud' ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Account and sync</Text>
-          <Text style={styles.sectionSubtitle}>
-            Keep the budget recoverable without mixing login credentials into the budget data itself.
-          </Text>
+          <Text style={styles.sectionTitle}>Account and backup</Text>
+          <Text style={styles.sectionSubtitle}>Local-first by default. Sign in only for recoverable backup.</Text>
 
           <View style={styles.accountBanner}>
             <View style={styles.accountCopy}>
               <Text style={styles.accountTitle}>{accountLabel}</Text>
               <Text style={styles.accountMeta}>
-                {authUser?.isAnonymous
-                  ? 'Guest mode works immediately, but budgets stay tied to this anonymous session until you create an account.'
-                  : 'Budgets are now tied to this login. Passwords stay in Firebase Auth, not in your Firestore budget data.'}
+                {isSignedIn
+                  ? 'Signed in. Premium unlocks AI and optional Firebase backup.'
+                  : 'Guest mode keeps everything on this device.'}
               </Text>
             </View>
           </View>
 
-          {authUser?.isAnonymous ? (
+          <View style={styles.suggestionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionHeaderCopy}>
+                <Text style={styles.reviewTitle}>{premiumStatusLabel}</Text>
+                <Text style={styles.suggestionText}>{premiumStatusMeta}</Text>
+              </View>
+              {!hasPremiumAccess ? (
+                <Pressable
+                  style={styles.inlineButtonCompact}
+                  onPress={() => openPremiumPaywall('settings_upgrade')}
+                >
+                  <Text style={styles.inlineButtonText}>Upgrade</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <View style={styles.compactHighlightRow}>
+              {['AI monthly review', 'AI expense help', 'Recoverable backup'].map((item) => (
+                <View key={item} style={styles.compactHighlightChip}>
+                  <Text style={styles.compactHighlightText}>{item}</Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={styles.actionRow}>
+              <Pressable
+                style={[styles.tertiaryButton, paywallBusyAction === 'restore' && styles.buttonDisabled]}
+                onPress={() => {
+                  setPaywallSource('settings_upgrade');
+                  void restorePremiumAccess();
+                }}
+                disabled={paywallBusyAction === 'restore'}
+              >
+                <Text style={styles.tertiaryButtonText}>
+                  {paywallBusyAction === 'restore' ? 'Restoring...' : 'Restore purchases'}
+                </Text>
+              </Pressable>
+              {hasPremiumAccess ? (
+                <Pressable style={styles.tertiaryButton} onPress={handleManageSubscription}>
+                  <Text style={styles.tertiaryButtonText}>Manage subscription</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+
+          {!isPaywallVisible && paywallStatus ? (
+            <Text style={styles.aiReviewErrorText}>{paywallStatus}</Text>
+          ) : null}
+
+          <View style={styles.switchRow}>
+            <View style={styles.sheetHeaderCopy}>
+              <Text style={styles.switchLabel}>Keep a Firebase backup</Text>
+              <Text style={styles.accountMeta}>
+                Off by default. Needs Premium and sign-in for reinstall recovery.
+              </Text>
+            </View>
+            <Switch
+              value={hasPremiumAccess && cloudBackupEnabled}
+              onValueChange={setCloudBackupEnabled}
+              trackColor={{ false: currentTheme.switchOff, true: currentTheme.switchOn }}
+              thumbColor={
+                hasPremiumAccess && cloudBackupEnabled
+                  ? currentTheme.switchThumbOn
+                  : currentTheme.switchThumbOff
+              }
+            />
+          </View>
+
+          <Text style={styles.accountMeta}>{cloudBackupMessage}</Text>
+
+          {authStatus ? (
+            <Text style={[styles.authStatusText, { color: authStatusColor }]}>{authStatus}</Text>
+          ) : null}
+
+          {!isSignedIn ? (
             <>
-              <View style={styles.filterRow}>
-                {(['create', 'signin'] as AuthMode[]).map((mode) => (
-                  <Pressable
-                    key={mode}
-                    style={[styles.filterChip, authMode === mode && styles.filterChipActive]}
-                    onPress={() => setAuthMode(mode)}
-                  >
-                    <Text style={[styles.filterChipText, authMode === mode && styles.filterChipTextActive]}>
-                      {mode === 'create' ? 'Create account' : 'Sign in'}
-                    </Text>
-                  </Pressable>
+              <View style={styles.compactHighlightRow}>
+                {authModeHighlights.map((item) => (
+                  <View key={item} style={styles.compactHighlightChip}>
+                    <Text style={styles.compactHighlightText}>{item}</Text>
+                  </View>
                 ))}
               </View>
 
-              <View style={styles.formShell}>
-                <View style={[styles.fieldCard, styles.fieldWide]}>
-                  <Text style={styles.fieldLabel}>Email</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={authEmail}
-                    onChangeText={setAuthEmail}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    autoComplete="email"
-                    placeholder="name@example.com"
-                    placeholderTextColor={currentTheme.placeholder}
-                    selectionColor={currentTheme.accent}
-                  />
+              {!showAuthComposer ? (
+                <View style={styles.actionRow}>
+                  <Pressable style={styles.primaryButton} onPress={() => setAuthModeWithReset('create')}>
+                    <Text style={styles.primaryButtonText}>Create account</Text>
+                  </Pressable>
+                  <Pressable style={styles.ghostButton} onPress={() => setAuthModeWithReset('signin')}>
+                    <Text style={styles.ghostButtonText}>Sign in</Text>
+                  </Pressable>
                 </View>
-              </View>
+              ) : (
+                <>
+                  <View style={styles.sectionActionRow}>
+                    <Pressable style={styles.tertiaryButton} onPress={() => setShowAuthComposer(false)}>
+                      <Text style={styles.tertiaryButtonText}>Hide form</Text>
+                    </Pressable>
+                  </View>
 
-              <View style={styles.formShell}>
-                <View style={[styles.fieldCard, styles.fieldWide]}>
-                  <Text style={styles.fieldLabel}>Password</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={authPassword}
-                    onChangeText={setAuthPassword}
-                    secureTextEntry
-                    autoCapitalize="none"
-                    autoComplete={authMode === 'create' ? 'new-password' : 'password'}
-                    placeholder="At least 6 characters"
-                    placeholderTextColor={currentTheme.placeholder}
-                    selectionColor={currentTheme.accent}
-                  />
-                </View>
-              </View>
+                  <View style={styles.filterRow}>
+                    {(['create', 'signin'] as AuthMode[]).map((mode) => (
+                      <Pressable
+                        key={mode}
+                        style={[styles.filterChip, authMode === mode && styles.filterChipActive]}
+                        onPress={() => setAuthModeWithReset(mode)}
+                      >
+                        <Text
+                          style={[styles.filterChipText, authMode === mode && styles.filterChipTextActive]}
+                        >
+                          {mode === 'create' ? 'Create account' : 'Sign in'}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
 
-              {authStatus ? (
-                <Text style={[styles.authStatusText, { color: authStatusColor }]}>{authStatus}</Text>
-              ) : null}
-
-              <View style={styles.actionRow}>
-                <Pressable
-                  style={[styles.primaryButton, authBusy && styles.buttonDisabled]}
-                  onPress={submitAuthAction}
-                  disabled={authBusy}
-                >
-                  <Text style={styles.primaryButtonText}>
-                    {authBusy ? 'Working...' : authMode === 'create' ? 'Save account' : 'Sign in'}
+                  <Text style={styles.accountMeta}>
+                    {authMode === 'create'
+                      ? 'Create a login only when you want recoverable backup.'
+                      : 'Sign in to the account linked to your backup.'}
                   </Text>
-                </Pressable>
-              </View>
+
+                  <View style={styles.formShell}>
+                    <View style={[styles.fieldCard, styles.fieldWide]}>
+                      <Text style={styles.fieldLabel}>Email</Text>
+                      <TextInput
+                        style={styles.fieldInput}
+                        value={authEmail}
+                        onChangeText={setAuthEmail}
+                        autoCapitalize="none"
+                        keyboardType="email-address"
+                        autoComplete="email"
+                        placeholder="name@example.com"
+                        placeholderTextColor={currentTheme.placeholder}
+                        selectionColor={currentTheme.accent}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.formShell}>
+                    <View style={[styles.fieldCard, styles.fieldWide]}>
+                      <View style={styles.fieldCardHeader}>
+                        <Text style={styles.fieldLabel}>Password</Text>
+                        <Pressable
+                          style={styles.fieldAccessoryButton}
+                          onPress={() => setShowAuthPassword((current) => !current)}
+                        >
+                          <Text style={styles.fieldAccessoryButtonText}>
+                            {showAuthPassword ? 'Hide' : 'Show'}
+                          </Text>
+                        </Pressable>
+                      </View>
+                      <TextInput
+                        style={styles.fieldInput}
+                        value={authPassword}
+                        onChangeText={setAuthPassword}
+                        secureTextEntry={!showAuthPassword}
+                        autoCapitalize="none"
+                        autoComplete={authMode === 'create' ? 'new-password' : 'password'}
+                        placeholder="At least 6 characters"
+                        placeholderTextColor={currentTheme.placeholder}
+                        selectionColor={currentTheme.accent}
+                      />
+                      <Text style={styles.fieldHint}>
+                        {authMode === 'create'
+                          ? 'Budget data stays separate from login details.'
+                          : 'Enter the password for this account.'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {authMode === 'create' ? (
+                    <View style={styles.formShell}>
+                      <View style={[styles.fieldCard, styles.fieldWide]}>
+                        <Text style={styles.fieldLabel}>Confirm password</Text>
+                        <TextInput
+                          style={styles.fieldInput}
+                          value={authConfirmPassword}
+                          onChangeText={setAuthConfirmPassword}
+                          secureTextEntry={!showAuthPassword}
+                          autoCapitalize="none"
+                          autoComplete="new-password"
+                          placeholder="Repeat the same password"
+                          placeholderTextColor={currentTheme.placeholder}
+                          selectionColor={currentTheme.accent}
+                        />
+                        <Text style={styles.fieldHint}>
+                          Required once so the account is set correctly.
+                        </Text>
+                      </View>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.actionRow}>
+                    <Pressable
+                      style={[styles.primaryButton, authPrimaryDisabled && styles.buttonDisabled]}
+                      onPress={submitAuthAction}
+                      disabled={authPrimaryDisabled}
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {authBusy ? 'Working...' : authMode === 'create' ? 'Create account' : 'Sign in'}
+                      </Text>
+                    </Pressable>
+                    {authMode === 'signin' ? (
+                      <Pressable
+                        style={[styles.tertiaryButton, authBusy && styles.buttonDisabled]}
+                        onPress={() => requestAuthPasswordReset()}
+                        disabled={authBusy}
+                      >
+                        <Text style={styles.tertiaryButtonText}>
+                          {authBusy ? 'Working...' : 'Forgot password'}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                </>
+              )}
             </>
           ) : (
             <>
+              <View style={styles.compactHighlightRow}>
+                {[
+                  hasPremiumAccess ? 'Premium active' : 'Free plan',
+                  cloudBackupEnabled && hasPremiumAccess ? 'Backup on' : 'Local only',
+                  'Recoverable login',
+                  'Budget data separate',
+                ].map((item) => (
+                  <View key={item} style={styles.compactHighlightChip}>
+                    <Text style={styles.compactHighlightText}>{item}</Text>
+                  </View>
+                ))}
+              </View>
+
               <Text style={styles.accountMeta}>
-                Signed in budgets sync to Firebase and stay recoverable across reinstalls and devices.
+                {cloudBackupEnabled
+                  ? 'Firebase backup can restore this budget after reinstall.'
+                  : 'Signed in, but still local until backup is turned on.'}
               </Text>
-              {authStatus ? (
-                <Text style={[styles.authStatusText, { color: authStatusColor }]}>{authStatus}</Text>
-              ) : null}
               <View style={styles.actionRow}>
+                {authUser?.email ? (
+                  <Pressable
+                    style={[styles.tertiaryButton, accountManagementBusy && styles.buttonDisabled]}
+                    onPress={() => requestAuthPasswordReset(authUser.email ?? undefined)}
+                    disabled={accountManagementBusy}
+                  >
+                    <Text style={styles.tertiaryButtonText}>
+                      {accountManagementBusy ? 'Working...' : 'Send reset link'}
+                    </Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
-                  style={[styles.tertiaryButton, authBusy && styles.buttonDisabled]}
-                  onPress={switchToGuestMode}
-                  disabled={authBusy}
+                  style={[styles.tertiaryButton, deleteAccountBusy && styles.buttonDisabled]}
+                  onPress={toggleDeleteAccountPrompt}
+                  disabled={deleteAccountBusy}
                 >
                   <Text style={styles.tertiaryButtonText}>
-                    {authBusy ? 'Working...' : 'Sign out to guest mode'}
+                    {showDeleteAccountPrompt ? 'Cancel delete' : 'Delete account'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.tertiaryButton, accountManagementBusy && styles.buttonDisabled]}
+                  onPress={switchToGuestMode}
+                  disabled={accountManagementBusy}
+                >
+                  <Text style={styles.tertiaryButtonText}>
+                    {accountManagementBusy ? 'Working...' : 'Sign out to guest mode'}
                   </Text>
                 </Pressable>
               </View>
+
+              {showDeleteAccountPrompt ? (
+                <View style={styles.accountDeletionPanel}>
+                  <Text style={styles.accountDeletionTitle}>Delete this account</Text>
+                  <Text style={styles.accountMeta}>
+                    This removes the Firebase login and its backed-up data. The copy on this device stays local.
+                  </Text>
+
+                  <View style={styles.formShell}>
+                    <View style={[styles.fieldCard, styles.fieldWide]}>
+                      <View style={styles.fieldCardHeader}>
+                        <Text style={styles.fieldLabel}>Confirm with password</Text>
+                        <Pressable
+                          style={styles.fieldAccessoryButton}
+                          onPress={() => setShowDeleteAccountPassword((current) => !current)}
+                        >
+                          <Text style={styles.fieldAccessoryButtonText}>
+                            {showDeleteAccountPassword ? 'Hide' : 'Show'}
+                          </Text>
+                        </Pressable>
+                      </View>
+                      <TextInput
+                        style={styles.fieldInput}
+                        value={deleteAccountPassword}
+                        onChangeText={setDeleteAccountPassword}
+                        secureTextEntry={!showDeleteAccountPassword}
+                        autoCapitalize="none"
+                        autoComplete="password"
+                        placeholder="Enter password to delete"
+                        placeholderTextColor={currentTheme.placeholder}
+                        selectionColor={currentTheme.accent}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.actionRow}>
+                    <Pressable
+                      style={[styles.inlineButtonCompact, styles.inlineButtonDanger, deleteAccountBusy && styles.buttonDisabled]}
+                      onPress={submitDeleteAccount}
+                      disabled={deleteAccountBusy}
+                    >
+                      <Text style={styles.inlineButtonDangerText}>
+                        {deleteAccountBusy ? 'Deleting...' : 'Delete permanently'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
             </>
           )}
         </View>
@@ -4892,9 +5699,7 @@ export default function App() {
       {activeSettingsSection === 'data' ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Import and export</Text>
-          <Text style={styles.sectionSubtitle}>
-            Choose the right format for sharing, spreadsheet work, or full restore. Imports support JSON, CSV, XLSX, app-generated PDF reports, and supported digital iSaveMoney PDFs.
-          </Text>
+          <Text style={styles.sectionSubtitle}>Share, restore, or move data between tools.</Text>
 
           <View style={styles.transferGrid}>
             {exportActions.map((action) => (
@@ -4949,7 +5754,7 @@ export default function App() {
             <View style={styles.importPanelCopy}>
               <Text style={styles.importPanelTitle}>Bring data back in</Text>
               <Text style={styles.importPanelText}>
-                Restore a backup, import spreadsheet data, or read a supported digital PDF export.
+                Restore a backup or import spreadsheet and PDF data.
               </Text>
             </View>
             <Pressable style={styles.primaryButton} onPress={importDataFile}>
@@ -4962,27 +5767,34 @@ export default function App() {
           <View style={styles.sectionHeader}>
             <View style={styles.sectionHeaderCopy}>
               <Text style={styles.sectionTitle}>AI cleanup review</Text>
-              <Text style={styles.sectionSubtitle}>
-                Review category naming, recurring tags, account labels, and possible cleanup moves.
-              </Text>
+              <Text style={styles.sectionSubtitle}>Check names, duplicates, and recurring labels.</Text>
             </View>
 
             <Pressable
               style={[styles.tertiaryButton, importCleanupBusy && styles.buttonDisabled]}
               onPress={generateAiImportCleanup}
-              disabled={importCleanupBusy}
+              disabled={hasPremiumAccess && importCleanupBusy}
             >
               <Text style={styles.tertiaryButtonText}>
-                {importCleanupBusy
-                  ? 'Reviewing...'
-                  : importCleanupReview
-                    ? 'Refresh review'
-                    : 'Review current data'}
+                {!hasPremiumAccess
+                  ? 'Unlock cleanup review'
+                  : importCleanupBusy
+                    ? 'Reviewing...'
+                    : importCleanupReview
+                      ? 'Refresh review'
+                      : 'Review current data'}
               </Text>
             </Pressable>
           </View>
 
-          {importCleanupReview ? (
+          {!hasPremiumAccess ? (
+            <View style={styles.emptyStateCompact}>
+              <Text style={styles.emptyTitle}>Premium cleanup review</Text>
+              <Text style={styles.emptyText}>
+                Premium reviews naming drift, likely duplicates, and recurring tags after imports.
+              </Text>
+            </View>
+          ) : importCleanupReview ? (
             <>
               <View style={styles.aiReviewMetaRow}>
                 <View style={styles.deltaChip}>
@@ -5033,12 +5845,12 @@ export default function App() {
             <View style={styles.emptyStateCompact}>
               <Text style={styles.emptyTitle}>No cleanup review yet</Text>
               <Text style={styles.emptyText}>
-                Run one quick AI pass when you want a second opinion on naming, duplicates, and recurring labels.
+                Run one quick pass when you want a second opinion on cleanup.
               </Text>
             </View>
           )}
 
-          {importCleanupError ? (
+          {hasPremiumAccess && importCleanupError ? (
             <Text style={styles.aiReviewErrorText}>{importCleanupError}</Text>
           ) : null}
         </View>
@@ -5098,36 +5910,33 @@ export default function App() {
               </Text>
               <Text style={styles.heroSubtitle}>
                 {hasActiveBudget
-                  ? `${formatCurrency(remaining)} left across ${categorySummaries.length} categories this month.`
-                  : `Set the monthly amount, then add categories to turn this into the live budget view.`}
-              </Text>
-              <Text
-                style={[
-                  styles.storageCaption,
-                  saveState === 'error'
-                    ? styles.storageCaptionError
-                    : cloudState === 'local-only'
-                      ? styles.storageCaptionWarning
-                      : styles.storageCaptionGood,
-                ]}
-              >
-                {saveMessage}
+                  ? `${formatCurrency(remaining)} left this month.`
+                  : 'Set the amount, then add categories.'}
               </Text>
 
               <View style={styles.limitPanel}>
-                <Text style={styles.limitLabel}>Monthly budget</Text>
-                <View style={styles.limitInputShell}>
-                  <Text style={styles.limitPrefix}>{activeMonthCurrencyMarker}</Text>
-                  <TextInput
-                    style={styles.limitInput}
-                    value={activeMonth.monthlyLimit}
-                    onChangeText={updateMonthlyLimit}
-                    keyboardType="numeric"
-                    placeholder="1700"
-                    placeholderTextColor={currentTheme.placeholder}
-                    selectionColor={currentTheme.accent}
-                  />
-                </View>
+                <Text style={styles.limitLabel}>Budget</Text>
+                {hasActiveBudget ? (
+                  <View style={styles.limitDisplayShell}>
+                    <Text style={styles.limitDisplayValue}>
+                      {monthlyLimitNumber > 0 ? formatCurrency(monthlyLimitNumber) : 'Set amount'}
+                    </Text>
+                    <Text style={styles.limitDisplayMeta}>Adjust it in Plan when the month changes.</Text>
+                  </View>
+                ) : (
+                  <View style={styles.limitInputShell}>
+                    <Text style={styles.limitPrefix}>{activeMonthCurrencyMarker}</Text>
+                    <TextInput
+                      style={styles.limitInput}
+                      value={activeMonth.monthlyLimit}
+                      onChangeText={updateMonthlyLimit}
+                      keyboardType="numeric"
+                      placeholder="1700"
+                      placeholderTextColor={currentTheme.placeholder}
+                      selectionColor={currentTheme.accent}
+                    />
+                  </View>
+                )}
 
                 <View style={styles.progressTrack}>
                   <View
@@ -5196,11 +6005,11 @@ export default function App() {
                       <Text style={styles.primaryButtonText}>Add expense</Text>
                     </Pressable>
                     <View style={styles.heroSecondaryRow}>
-                      <Pressable style={styles.tertiaryButton} onPress={() => setActiveScreen('spend')}>
-                        <Text style={styles.tertiaryButtonText}>Open activity</Text>
+                      <Pressable style={styles.tertiaryButton} onPress={() => navigateToScreen('spend')}>
+                        <Text style={styles.tertiaryButtonText}>Activity</Text>
                       </Pressable>
                       <Pressable style={styles.tertiaryButton} onPress={openPlanCategories}>
-                        <Text style={styles.tertiaryButtonText}>Edit categories</Text>
+                        <Text style={styles.tertiaryButtonText}>Plan</Text>
                       </Pressable>
                     </View>
                   </>
@@ -5228,14 +6037,12 @@ export default function App() {
               <View style={styles.card}>
                 <View style={styles.sectionHeader}>
                   <View style={styles.sectionHeaderCopy}>
-                    <Text style={styles.sectionTitle}>Current budget</Text>
-                    <Text style={styles.sectionSubtitle}>
-                      Keep attention items at the top. Tap a row for details, recent expenses, and a faster add flow.
-                    </Text>
+                    <Text style={styles.sectionTitle}>Categories</Text>
+                    <Text style={styles.sectionSubtitle}>Tap a row to log, review, or adjust.</Text>
                   </View>
 
-                  <Pressable style={styles.tertiaryButton} onPress={() => setActiveScreen('insights')}>
-                    <Text style={styles.tertiaryButtonText}>Open insights</Text>
+                  <Pressable style={styles.tertiaryButton} onPress={() => navigateToScreen('insights')}>
+                    <Text style={styles.tertiaryButtonText}>Insights</Text>
                   </Pressable>
                 </View>
 
@@ -5259,13 +6066,16 @@ export default function App() {
                   <View style={styles.sectionActionRow}>
                     <Pressable
                       style={styles.tertiaryButton}
-                      onPress={() => setShowAllBudgetCategories((current) => !current)}
+                      onPress={() => {
+                        animateUi();
+                        setShowAllBudgetCategories((current) => !current);
+                      }}
                     >
                       <Text style={styles.tertiaryButtonText}>
                         {showAllBudgetCategories
-                          ? 'Hide healthy categories'
+                          ? 'Hide extras'
                           : priorityBudgetCategorySummaries.length > 0
-                            ? `Show ${hiddenHealthyBudgetCategoryCount} healthy categories`
+                            ? `Show ${hiddenHealthyBudgetCategoryCount} healthy`
                             : `Show ${hiddenHealthyBudgetCategoryCount} more categories`}
                       </Text>
                     </Pressable>
@@ -5275,7 +6085,6 @@ export default function App() {
                 <View style={styles.currentBudgetList}>
                   {visibleBudgetCategorySummaries.map((summary) => {
                     const theme = categoryThemes[summary.category.themeId];
-                    const usageLabel = `${Math.round(clamp(summary.ratio) * 100)}% used`;
                     const previousMatch = previousCategorySummaryByName.get(
                       summary.category.name.trim().toLowerCase(),
                     );
@@ -5290,17 +6099,19 @@ export default function App() {
                           )}`
                         : null;
                     const detailBits = [
-                      summary.category.recurring ? 'Fixed monthly' : 'Flexible',
+                      summary.thisWeek > 0 ? `This week ${formatCurrency(summary.thisWeek)}` : null,
                       summary.category.subcategories.length > 0
                         ? `${summary.category.subcategories.length} sub${summary.category.subcategories.length === 1 ? '' : 's'}`
                         : null,
+                      summary.category.recurring && summary.thisWeek <= 0 ? 'Fixed' : null,
                     ].filter(Boolean);
                     const statusLabel =
                       summary.tone === 'alert'
-                        ? 'Over plan'
+                        ? 'Over'
                         : summary.tone === 'warning'
                           ? 'Watch'
                           : null;
+                    const usageLabel = `${Math.round(clamp(summary.ratio) * 100)}%`;
 
                     return (
                       <ScrollView
@@ -5419,14 +6230,10 @@ export default function App() {
             ) : (
               <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Start current budget</Text>
-                <Text style={styles.sectionSubtitle}>
-                  Set the monthly amount, then add the first category to make this screen useful day to day.
-                </Text>
+                <Text style={styles.sectionSubtitle}>Set the amount, then add the first category.</Text>
                 <View style={styles.emptyState}>
                   <Text style={styles.emptyTitle}>No categories yet</Text>
-                  <Text style={styles.emptyText}>
-                    Once the first category is in place, this screen becomes the live view for the month.
-                  </Text>
+                  <Text style={styles.emptyText}>Add one category to turn this into the live monthly view.</Text>
                   <View style={styles.emptyActionRow}>
                     <Pressable style={styles.primaryButton} onPress={openBudgetBuilder}>
                       <Text style={styles.primaryButtonText}>Create budget</Text>
@@ -5459,7 +6266,7 @@ export default function App() {
                     <Text style={styles.primaryButtonText}>Add expense</Text>
                   </Pressable>
                   <Pressable style={styles.ghostButton} onPress={openPlanCategories}>
-                    <Text style={styles.ghostButtonText}>Edit categories</Text>
+                    <Text style={styles.ghostButtonText}>Plan</Text>
                   </Pressable>
                 </>
               ) : (
@@ -5470,17 +6277,18 @@ export default function App() {
             </View>
 
             <View style={styles.card}>
-              <View style={styles.sectionHeader}>
-                <View style={styles.sectionHeaderCopy}>
-                  <Text style={styles.sectionTitle}>Transactions</Text>
-                  <Text style={styles.sectionSubtitle}>
-                    Search history, focus on over-budget categories, and clean up mistakes quickly.
-                  </Text>
-                </View>
+                <View style={styles.sectionHeader}>
+                  <View style={styles.sectionHeaderCopy}>
+                    <Text style={styles.sectionTitle}>Transactions</Text>
+                    <Text style={styles.sectionSubtitle}>Search and tidy the ledger.</Text>
+                  </View>
 
                 <Pressable
                   style={styles.tertiaryButton}
-                  onPress={() => setShowTransactionTools((current) => !current)}
+                  onPress={() => {
+                    animateUi();
+                    setShowTransactionTools((current) => !current);
+                  }}
                 >
                   <Text style={styles.tertiaryButtonText}>
                     {showTransactionTools || hasTransactionRefinements
@@ -5750,7 +6558,10 @@ export default function App() {
                 <View style={styles.sectionActionRow}>
                   <Pressable
                     style={styles.tertiaryButton}
-                    onPress={() => setShowAllTransactions(true)}
+                    onPress={() => {
+                      animateUi();
+                      setShowAllTransactions(true);
+                    }}
                   >
                     <Text style={styles.tertiaryButtonText}>
                       Show {hiddenTransactionCount} more transactions
@@ -5763,7 +6574,10 @@ export default function App() {
                 <View style={styles.sectionActionRow}>
                   <Pressable
                     style={styles.tertiaryButton}
-                    onPress={() => setShowAllTransactions(false)}
+                    onPress={() => {
+                      animateUi();
+                      setShowAllTransactions(false);
+                    }}
                   >
                     <Text style={styles.tertiaryButtonText}>Show fewer transactions</Text>
                   </Pressable>
@@ -5779,7 +6593,7 @@ export default function App() {
               <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Create budget</Text>
                 <Text style={styles.sectionSubtitle}>
-                  Start with one monthly amount. After that, you can add categories and subcategories.
+                  Set the amount first. Categories come right after.
                 </Text>
 
                 <View style={styles.formShell}>
@@ -5802,9 +6616,25 @@ export default function App() {
 
                 {monthlyLimitNumber > 0 ? (
                   <>
-                    <Text style={styles.fieldLabel}>Quick guide</Text>
+                    <Text style={styles.fieldLabel}>Start with essentials</Text>
+                    <View style={styles.chipWrap}>
+                      {quickStartPresets.map((preset) => {
+                        const theme = categoryThemes[preset.themeId];
+
+                        return (
+                          <View
+                            key={`quick-start-${preset.name}`}
+                            style={[styles.selectionChip, { backgroundColor: theme.chip }]}
+                          >
+                            <Text style={[styles.selectionChipText, { color: theme.chipText }]}>
+                              {preset.name} {formatCurrency(preset.planned)}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
                     <Text style={styles.selectorHint}>
-                      You only need the total right now. You can split it into categories next.
+                      You can start empty or drop in a few broad lanes and adjust them later.
                     </Text>
                   </>
                 ) : (
@@ -5820,6 +6650,12 @@ export default function App() {
                   >
                     <Text style={styles.primaryButtonText}>Start budget</Text>
                   </Pressable>
+
+                  {monthlyLimitNumber > 0 ? (
+                    <Pressable style={styles.ghostButton} onPress={addQuickStartCategories}>
+                      <Text style={styles.ghostButtonText}>Add 3 essentials</Text>
+                    </Pressable>
+                  ) : null}
 
                   {previousBudgetMonth ? (
                     <Pressable style={styles.ghostButton} onPress={copyPreviousBudgetIntoActiveMonth}>
@@ -6114,114 +6950,129 @@ export default function App() {
                 </View>
 
                 {monthlyLimitNumber > 0 ? (
-                  <View style={styles.suggestionCard}>
-                    <View style={styles.sectionHeader}>
-                      <View style={styles.sectionHeaderCopy}>
-                        <Text style={styles.reviewTitle}>AI starter plan</Text>
-                        <Text style={styles.suggestionText}>
-                          Pull a few likely categories from earlier months, then apply only what still fits.
-                        </Text>
+                  activeMonthPlanner || activeMonthPlannerError || monthPlannerBusy ? (
+                    <View style={styles.suggestionCard}>
+                      <View style={styles.sectionHeader}>
+                        <View style={styles.sectionHeaderCopy}>
+                          <Text style={styles.reviewTitle}>AI starter plan</Text>
+                          <Text style={styles.suggestionText}>
+                            Reuse likely lanes from earlier months, then keep only what still fits.
+                          </Text>
+                        </View>
+
+                        <Pressable
+                          style={[styles.tertiaryButton, monthPlannerBusy && styles.buttonDisabled]}
+                          onPress={generateAiMonthPlanner}
+                          disabled={hasPremiumAccess && monthPlannerBusy}
+                        >
+                          <Text style={styles.tertiaryButtonText}>
+                            {!hasPremiumAccess
+                              ? 'Unlock starter plan'
+                              : monthPlannerBusy
+                                ? 'Thinking...'
+                                : activeMonthPlanner
+                                  ? 'Refresh'
+                                  : 'Suggest'}
+                          </Text>
+                        </Pressable>
                       </View>
 
-                      <Pressable
-                        style={[styles.tertiaryButton, monthPlannerBusy && styles.buttonDisabled]}
-                        onPress={generateAiMonthPlanner}
-                        disabled={monthPlannerBusy}
-                      >
+                      {!hasPremiumAccess ? (
+                        <Text style={styles.selectorHint}>
+                          Premium can suggest a few likely starter lanes from earlier months.
+                        </Text>
+                      ) : activeMonthPlanner ? (
+                        <>
+                          <View style={styles.aiReviewMetaRow}>
+                            <View style={styles.deltaChip}>
+                              <Text style={styles.deltaChipText}>{activeMonthPlanner.model}</Text>
+                            </View>
+                          </View>
+
+                          <Text style={styles.reviewTitle}>{activeMonthPlanner.headline}</Text>
+                          <Text style={styles.suggestionText}>{activeMonthPlanner.summary}</Text>
+
+                          <View style={styles.compactHighlightRow}>
+                            {activeMonthPlanner.actions.map((action) => (
+                              <View key={action} style={styles.compactHighlightChip}>
+                                <Text style={styles.compactHighlightText}>{action}</Text>
+                              </View>
+                            ))}
+                          </View>
+
+                          <View style={styles.suggestionList}>
+                            {activeMonthPlanner.suggestedCategories.map((suggestion) => (
+                              <View
+                                key={`${suggestion.name}-${suggestion.bucket}`}
+                                style={styles.suggestionCard}
+                              >
+                                <View style={styles.sectionHeader}>
+                                  <View style={styles.sectionHeaderCopy}>
+                                    <Text style={styles.reviewTitle}>
+                                      {suggestion.name} {formatCurrency(suggestion.planned)}
+                                    </Text>
+                                    <Text style={styles.suggestionText}>{suggestion.reason}</Text>
+                                  </View>
+
+                                  <Pressable
+                                    style={styles.inlineButtonCompact}
+                                    onPress={() => applyAiPlannerSuggestion(suggestion)}
+                                  >
+                                    <Text style={styles.inlineButtonText}>Use</Text>
+                                  </Pressable>
+                                </View>
+
+                                <View style={styles.compactHighlightRow}>
+                                  <View style={styles.compactHighlightChip}>
+                                    <Text style={styles.compactHighlightText}>
+                                      {categoryBucketMeta[suggestion.bucket as CategoryBucket].label}
+                                    </Text>
+                                  </View>
+                                  {suggestion.recurring ? (
+                                    <View style={styles.compactHighlightChip}>
+                                      <Text style={styles.compactHighlightText}>Recurring</Text>
+                                    </View>
+                                  ) : null}
+                                  {suggestion.subcategories.length > 0 ? (
+                                    <View style={styles.compactHighlightChip}>
+                                      <Text style={styles.compactHighlightText}>
+                                        {suggestion.subcategories.join(', ')}
+                                      </Text>
+                                    </View>
+                                  ) : null}
+                                </View>
+                              </View>
+                            ))}
+                          </View>
+
+                          <Text style={styles.forecastStatMeta}>{activeMonthPlanner.watchout}</Text>
+                        </>
+                      ) : null}
+
+                      {hasPremiumAccess && activeMonthPlannerError ? (
+                        <Text style={styles.aiReviewErrorText}>{activeMonthPlannerError}</Text>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <View style={styles.inlineAssistCard}>
+                      <View style={styles.inlineAssistCopy}>
+                        <Text style={styles.inlineAssistTitle}>Starter help</Text>
+                        <Text style={styles.inlineAssistText}>
+                          Pull a few likely lanes from earlier months only when you need a nudge.
+                        </Text>
+                      </View>
+                      <Pressable style={styles.tertiaryButton} onPress={generateAiMonthPlanner}>
                         <Text style={styles.tertiaryButtonText}>
-                          {monthPlannerBusy
-                            ? 'Thinking...'
-                            : activeMonthPlanner
-                              ? 'Refresh plan'
-                              : 'Suggest starter lanes'}
+                          {!hasPremiumAccess ? 'Unlock AI' : 'Suggest'}
                         </Text>
                       </Pressable>
                     </View>
-
-                    {activeMonthPlanner ? (
-                      <>
-                        <View style={styles.aiReviewMetaRow}>
-                          <View style={styles.deltaChip}>
-                            <Text style={styles.deltaChipText}>{activeMonthPlanner.model}</Text>
-                          </View>
-                        </View>
-
-                        <Text style={styles.reviewTitle}>{activeMonthPlanner.headline}</Text>
-                        <Text style={styles.suggestionText}>{activeMonthPlanner.summary}</Text>
-
-                        <View style={styles.compactHighlightRow}>
-                          {activeMonthPlanner.actions.map((action) => (
-                            <View key={action} style={styles.compactHighlightChip}>
-                              <Text style={styles.compactHighlightText}>{action}</Text>
-                            </View>
-                          ))}
-                        </View>
-
-                        <View style={styles.suggestionList}>
-                          {activeMonthPlanner.suggestedCategories.map((suggestion) => (
-                            <View
-                              key={`${suggestion.name}-${suggestion.bucket}`}
-                              style={styles.suggestionCard}
-                            >
-                              <View style={styles.sectionHeader}>
-                                <View style={styles.sectionHeaderCopy}>
-                                  <Text style={styles.reviewTitle}>
-                                    {suggestion.name} {formatCurrency(suggestion.planned)}
-                                  </Text>
-                                  <Text style={styles.suggestionText}>{suggestion.reason}</Text>
-                                </View>
-
-                                <Pressable
-                                  style={styles.inlineButtonCompact}
-                                  onPress={() => applyAiPlannerSuggestion(suggestion)}
-                                >
-                                  <Text style={styles.inlineButtonText}>Use</Text>
-                                </Pressable>
-                              </View>
-
-                              <View style={styles.compactHighlightRow}>
-                                <View style={styles.compactHighlightChip}>
-                                  <Text style={styles.compactHighlightText}>
-                                    {categoryBucketMeta[suggestion.bucket as CategoryBucket].label}
-                                  </Text>
-                                </View>
-                                {suggestion.recurring ? (
-                                  <View style={styles.compactHighlightChip}>
-                                    <Text style={styles.compactHighlightText}>Recurring</Text>
-                                  </View>
-                                ) : null}
-                                {suggestion.subcategories.length > 0 ? (
-                                  <View style={styles.compactHighlightChip}>
-                                    <Text style={styles.compactHighlightText}>
-                                      {suggestion.subcategories.join(', ')}
-                                    </Text>
-                                  </View>
-                                ) : null}
-                              </View>
-                            </View>
-                          ))}
-                        </View>
-
-                        <Text style={styles.forecastStatMeta}>{activeMonthPlanner.watchout}</Text>
-                      </>
-                    ) : (
-                      <View style={styles.emptyStateCompact}>
-                        <Text style={styles.emptyTitle}>No AI starter plan yet</Text>
-                        <Text style={styles.emptyText}>
-                          Ask Gemini to pull likely categories from your earlier months, then use any suggestion to prefill the form.
-                        </Text>
-                      </View>
-                    )}
-
-                    {activeMonthPlannerError ? (
-                      <Text style={styles.aiReviewErrorText}>{activeMonthPlannerError}</Text>
-                    ) : null}
-                  </View>
+                  )
                 ) : null}
 
-                <Text style={styles.fieldLabel}>Common essentials</Text>
+                <Text style={styles.fieldLabel}>Quick start</Text>
                 <View style={styles.chipWrap}>
-                  {essentialQuickPresets.map((preset) => {
+                  {quickStartPresets.map((preset) => {
                     const theme = categoryThemes[preset.themeId];
                     const matchingCategory =
                       activeMonth.categories.find(
@@ -6500,7 +7351,10 @@ export default function App() {
                       <>
                         <Pressable
                           style={styles.tertiaryButton}
-                          onPress={() => setShowPlanCategoryList((current) => !current)}
+                          onPress={() => {
+                            animateUi();
+                            setShowPlanCategoryList((current) => !current);
+                          }}
                         >
                           <Text style={styles.tertiaryButtonText}>
                             {showPlanCategoryList
@@ -6508,7 +7362,13 @@ export default function App() {
                               : `Show current categories (${categorySummaries.length})`}
                           </Text>
                         </Pressable>
-                        <Pressable style={styles.tertiaryButton} onPress={() => setPlanSetupStep('review')}>
+                        <Pressable
+                          style={styles.tertiaryButton}
+                          onPress={() => {
+                            animateUi();
+                            setPlanSetupStep('review');
+                          }}
+                        >
                           <Text style={styles.tertiaryButtonText}>Continue to review</Text>
                         </Pressable>
                       </>
@@ -6704,7 +7564,10 @@ export default function App() {
                   <View style={styles.sectionActionRow}>
                     <Pressable
                       style={styles.secondaryButton}
-                      onPress={() => setShowAllPlanCategories((current) => !current)}
+                      onPress={() => {
+                        animateUi();
+                        setShowAllPlanCategories((current) => !current);
+                      }}
                     >
                       <Text style={styles.secondaryButtonText}>
                         {showAllPlanCategories
@@ -6833,8 +7696,8 @@ export default function App() {
 
                     {isBudgetSetupComplete ? (
                       <View style={styles.planFinishCard}>
-                        <Text style={styles.planFinishTitle}>Budget is ready</Text>
-                        <Text style={styles.planFinishText}>{budgetSetupSummary}</Text>
+                        <Text style={styles.planFinishTitle}>Budget ready</Text>
+                        <Text style={styles.planFinishText}>The month is balanced. Start tracking or jump back to the main budget.</Text>
                         <View style={styles.compactHighlightRow}>
                           {completedSetupHighlights.map((item) => (
                             <View key={item} style={styles.compactHighlightChip}>
@@ -6843,10 +7706,10 @@ export default function App() {
                           ))}
                         </View>
                         <View style={styles.actionRow}>
-                          <Pressable style={styles.primaryButton} onPress={() => setActiveScreen('home')}>
+                          <Pressable style={styles.primaryButton} onPress={() => navigateToScreen('home')}>
                             <Text style={styles.primaryButtonText}>View current budget</Text>
                           </Pressable>
-                          <Pressable style={styles.ghostButton} onPress={() => setActiveScreen('spend')}>
+                          <Pressable style={styles.ghostButton} onPress={() => navigateToScreen('spend')}>
                             <Text style={styles.ghostButtonText}>Add first expense</Text>
                           </Pressable>
                         </View>
@@ -6883,10 +7746,10 @@ export default function App() {
                           <Text style={styles.planFinishTitle}>Finish setup</Text>
                           <Text style={styles.planFinishText}>{budgetSetupSummary}</Text>
                           <View style={styles.actionRow}>
-                            <Pressable style={styles.primaryButton} onPress={() => setActiveScreen('home')}>
+                            <Pressable style={styles.primaryButton} onPress={() => navigateToScreen('home')}>
                               <Text style={styles.primaryButtonText}>View current budget</Text>
                             </Pressable>
-                            <Pressable style={styles.ghostButton} onPress={() => setActiveScreen('spend')}>
+                            <Pressable style={styles.ghostButton} onPress={() => navigateToScreen('spend')}>
                               <Text style={styles.ghostButtonText}>Add first expense</Text>
                             </Pressable>
                           </View>
@@ -7103,9 +7966,7 @@ export default function App() {
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionHeaderCopy}>
                   <Text style={styles.sectionTitle}>Forecast and alerts</Text>
-                  <Text style={styles.sectionSubtitle}>
-                    Use the deeper pace, forecast, and risk view here instead of crowding the main budget screen.
-                  </Text>
+                  <Text style={styles.sectionSubtitle}>Deeper pace, forecast, and risk view.</Text>
                 </View>
                 <View style={styles.deltaChip}>
                   <Text style={styles.deltaChipText}>{forecastChipLabel}</Text>
@@ -7164,6 +8025,16 @@ export default function App() {
                   <Text style={styles.trendKicker}>Forecast confidence</Text>
                   <Text style={styles.trendValueSmall}>{forecastSnapshot.confidenceLabel}</Text>
                 </View>
+              </View>
+
+              <View style={styles.insightStatGrid}>
+                {insightDecisionCards.map((item) => (
+                  <View key={item.label} style={styles.insightStatCard}>
+                    <Text style={styles.insightStatLabel}>{item.label}</Text>
+                    <Text style={styles.insightStatValue}>{item.value}</Text>
+                    <Text style={styles.forecastStatMeta}>{item.meta}</Text>
+                  </View>
+                ))}
               </View>
 
               <Text style={styles.fieldLabel}>Weekly spend pace</Text>
@@ -7458,9 +8329,9 @@ export default function App() {
             </View>
 
             <View style={styles.card}>
-              <Text style={styles.sectionTitle}>Smart suggestions</Text>
+              <Text style={styles.sectionTitle}>Next moves</Text>
               <Text style={styles.sectionSubtitle}>
-                Actionable notes for flexible spend. Fixed recurring costs are treated separately.
+                Focus on the adjustable part of the budget. Fixed recurring costs stay separate.
               </Text>
 
               <View style={styles.suggestionList}>
@@ -7490,28 +8361,35 @@ export default function App() {
             <View style={styles.card}>
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionHeaderCopy}>
-                  <Text style={styles.sectionTitle}>AI monthly review</Text>
-                  <Text style={styles.sectionSubtitle}>
-                    Server-side Gemini review using monthly aggregates only. No raw notes are sent.
-                  </Text>
+                  <Text style={styles.sectionTitle}>Monthly review</Text>
+                  <Text style={styles.sectionSubtitle}>Server-side Gemini review from monthly totals only.</Text>
                 </View>
 
                 <Pressable
                   style={styles.tertiaryButton}
                   onPress={generateAiMonthlyReview}
-                  disabled={aiReviewBusy}
+                  disabled={hasPremiumAccess && aiReviewBusy}
                 >
                   <Text style={styles.tertiaryButtonText}>
-                    {aiReviewBusy
-                      ? 'Generating...'
-                      : activeAiReview
-                        ? 'Refresh review'
-                        : 'Generate review'}
+                    {!hasPremiumAccess
+                      ? 'Unlock review'
+                      : aiReviewBusy
+                        ? 'Generating...'
+                        : activeAiReview
+                          ? 'Refresh review'
+                          : 'Generate review'}
                   </Text>
                 </Pressable>
               </View>
 
-              {activeAiReview ? (
+              {!hasPremiumAccess ? (
+                <View style={styles.emptyStateCompact}>
+                  <Text style={styles.emptyTitle}>Premium review</Text>
+                  <Text style={styles.emptyText}>
+                    Premium adds one concise Gemini review focused on realistic changes.
+                  </Text>
+                </View>
+              ) : activeAiReview ? (
                 <>
                   <View style={styles.aiReviewMetaRow}>
                     <View style={styles.deltaChip}>
@@ -7544,13 +8422,11 @@ export default function App() {
               ) : (
                 <View style={styles.emptyStateCompact}>
                   <Text style={styles.emptyTitle}>No AI review yet</Text>
-                  <Text style={styles.emptyText}>
-                    Generate one concise monthly review when you want a second opinion on how to improve the budget.
-                  </Text>
+                  <Text style={styles.emptyText}>Generate a quick second opinion for this month.</Text>
                 </View>
               )}
 
-              {activeAiReviewError ? (
+              {hasPremiumAccess && activeAiReviewError ? (
                 <Text style={styles.aiReviewErrorText}>{activeAiReviewError}</Text>
               ) : null}
             </View>
@@ -7559,6 +8435,7 @@ export default function App() {
 
         {activeScreen === 'settings' ? renderSettingsScreen() : null}
       </ScrollView>
+      {renderPremiumPaywall()}
       <Modal
         animationType="slide"
         transparent
@@ -7806,6 +8683,268 @@ export default function App() {
       <Modal
         animationType="slide"
         transparent
+        visible={isLocaleSheetOpen}
+        onRequestClose={closeLocalePicker}
+      >
+        <View style={styles.sheetBackdrop}>
+          <Pressable style={styles.sheetDismissArea} onPress={closeLocalePicker} />
+          <View style={styles.sheetCard}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <View style={styles.sheetHeaderCopy}>
+                <Text style={styles.sheetTitle}>
+                  {localeSheetMode === 'currency' ? 'Choose currency' : 'Choose language'}
+                </Text>
+                <Text style={styles.sheetSubtitle}>
+                  {localeSheetMode === 'currency'
+                    ? 'Set the default for new budgets, exports, and reports.'
+                    : 'Set the locale used for dates and number formatting.'}
+                </Text>
+              </View>
+              <Pressable style={styles.secondaryButton} onPress={closeLocalePicker}>
+                <Text style={styles.secondaryButtonText}>Close</Text>
+              </Pressable>
+            </View>
+            <ScrollView
+              style={styles.sheetScroll}
+              contentContainerStyle={styles.sheetContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {localeSheetMode === 'currency' ? (
+                <>
+                  <View style={[styles.fieldCard, styles.fieldWide, styles.selectorSearchCard]}>
+                    <Text style={styles.fieldLabel}>Search currencies</Text>
+                    <TextInput
+                      value={currencySearchQuery}
+                      onChangeText={setCurrencySearchQuery}
+                      placeholder="Search by code, name, or symbol"
+                      placeholderTextColor={currentTheme.placeholder}
+                      style={styles.fieldInput}
+                    />
+                  </View>
+
+                  {!normalizedCurrencySearchQuery ? (
+                    <>
+                      <Text style={styles.selectorGroupLabel}>Main picks</Text>
+                      <View style={styles.filterRow}>
+                        {featuredCurrencyOptions.map((option) => {
+                          const selected = currentCurrencyCode === option.code;
+
+                          return (
+                            <Pressable
+                              key={option.code}
+                              style={[styles.filterChip, selected && styles.filterChipActive]}
+                              onPress={() => updateCurrencyCode(option.code)}
+                            >
+                              <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
+                                {option.code}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+
+                      {recentCurrencyOptions.length > 0 ? (
+                        <>
+                          <Text style={styles.selectorGroupLabel}>Recently used</Text>
+                          <View style={styles.filterRow}>
+                            {recentCurrencyOptions.map((option) => {
+                              const selected = currentCurrencyCode === option.code;
+
+                              return (
+                                <Pressable
+                                  key={option.code}
+                                  style={[styles.filterChip, selected && styles.filterChipActive]}
+                                  onPress={() => updateCurrencyCode(option.code)}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.filterChipText,
+                                      selected && styles.filterChipTextActive,
+                                    ]}
+                                  >
+                                    {option.code}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  <Text style={styles.selectorGroupLabel}>
+                    {normalizedCurrencySearchQuery ? 'Matches' : 'All currencies'}
+                  </Text>
+                  <View style={styles.selectorList}>
+                    {visibleCurrencyOptions.length > 0 ? (
+                      visibleCurrencyOptions.map((option) => {
+                        const selected = currentCurrencyCode === option.code;
+
+                        return (
+                          <Pressable
+                            key={option.code}
+                            style={[styles.selectorRow, selected && styles.selectorRowActive]}
+                            onPress={() => updateCurrencyCode(option.code)}
+                          >
+                            <View style={styles.selectorRowCopy}>
+                              <Text
+                                style={[
+                                  styles.selectorRowTitle,
+                                  selected && styles.selectorRowTitleActive,
+                                ]}
+                              >
+                                {option.label}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.selectorRowMeta,
+                                  selected && styles.selectorRowMetaActive,
+                                ]}
+                              >
+                                {option.description}
+                              </Text>
+                            </View>
+                            <Text
+                              style={[
+                                styles.selectorRowCode,
+                                selected && styles.selectorRowCodeActive,
+                              ]}
+                            >
+                              {option.code}
+                            </Text>
+                          </Pressable>
+                        );
+                      })
+                    ) : (
+                      <Text style={styles.selectorEmptyText}>No currencies matched that search.</Text>
+                    )}
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={[styles.fieldCard, styles.fieldWide, styles.selectorSearchCard]}>
+                    <Text style={styles.fieldLabel}>Search languages</Text>
+                    <TextInput
+                      value={languageSearchQuery}
+                      onChangeText={setLanguageSearchQuery}
+                      placeholder="Search by language or locale"
+                      placeholderTextColor={currentTheme.placeholder}
+                      style={styles.fieldInput}
+                    />
+                  </View>
+
+                  {!normalizedLanguageSearchQuery ? (
+                    <>
+                      <Text style={styles.selectorGroupLabel}>Main picks</Text>
+                      <View style={styles.filterRow}>
+                        {featuredLanguageOptions.map((option) => {
+                          const selected = currentLanguageCode === option.code;
+
+                          return (
+                            <Pressable
+                              key={option.code}
+                              style={[styles.filterChip, selected && styles.filterChipActive]}
+                              onPress={() => updateLanguageCode(option.code)}
+                            >
+                              <Text
+                                style={[styles.filterChipText, selected && styles.filterChipTextActive]}
+                              >
+                                {option.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+
+                      {recentLanguageOptions.length > 0 ? (
+                        <>
+                          <Text style={styles.selectorGroupLabel}>Recently used</Text>
+                          <View style={styles.filterRow}>
+                            {recentLanguageOptions.map((option) => {
+                              const selected = currentLanguageCode === option.code;
+
+                              return (
+                                <Pressable
+                                  key={option.code}
+                                  style={[styles.filterChip, selected && styles.filterChipActive]}
+                                  onPress={() => updateLanguageCode(option.code)}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.filterChipText,
+                                      selected && styles.filterChipTextActive,
+                                    ]}
+                                  >
+                                    {option.label}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  <Text style={styles.selectorGroupLabel}>
+                    {normalizedLanguageSearchQuery ? 'Matches' : 'All languages'}
+                  </Text>
+                  <View style={styles.selectorList}>
+                    {visibleLanguageOptions.length > 0 ? (
+                      visibleLanguageOptions.map((option) => {
+                        const selected = currentLanguageCode === option.code;
+
+                        return (
+                          <Pressable
+                            key={option.code}
+                            style={[styles.selectorRow, selected && styles.selectorRowActive]}
+                            onPress={() => updateLanguageCode(option.code)}
+                          >
+                            <View style={styles.selectorRowCopy}>
+                              <Text
+                                style={[
+                                  styles.selectorRowTitle,
+                                  selected && styles.selectorRowTitleActive,
+                                ]}
+                              >
+                                {option.label}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.selectorRowMeta,
+                                  selected && styles.selectorRowMetaActive,
+                                ]}
+                              >
+                                {`Locale ${getLocaleTag(option.code)}`}
+                              </Text>
+                            </View>
+                            <Text
+                              style={[
+                                styles.selectorRowCode,
+                                selected && styles.selectorRowCodeActive,
+                              ]}
+                            >
+                              {option.code.toUpperCase()}
+                            </Text>
+                          </Pressable>
+                        );
+                      })
+                    ) : (
+                      <Text style={styles.selectorEmptyText}>No languages matched that search.</Text>
+                    )}
+                  </View>
+                </>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        animationType="slide"
+        transparent
         visible={isAccountSheetOpen}
         onRequestClose={closeAccountSheet}
       >
@@ -7851,17 +8990,15 @@ export default function App() {
                 return;
               }
 
-              setActiveScreen(screenId);
+              navigateToScreen(screenId);
             }}
           >
-            <Text
+            <View
               style={[
-                styles.bottomNavIcon,
-                activeScreen === screenId && styles.bottomNavIconActive,
+                styles.bottomNavMarker,
+                activeScreen === screenId && styles.bottomNavMarkerActive,
               ]}
-            >
-              {screenMeta[screenId].navIcon}
-            </Text>
+            />
             <Text
               style={[
                 styles.bottomNavText,
@@ -7903,62 +9040,64 @@ const createStyles = (
     orb: {
       position: 'absolute',
       borderRadius: 999,
-      opacity: 0.82,
+      opacity: 0.54,
     },
     orbPrimary: {
-      width: 260,
-      height: 260,
-      backgroundColor: theme.orbPrimary,
-      top: -50,
-      right: -70,
-    },
-    orbSoft: {
       width: 220,
       height: 220,
-      backgroundColor: theme.orbSecondary,
-      top: 320,
-      left: -90,
+      backgroundColor: theme.orbPrimary,
+      top: -36,
+      right: -58,
     },
-    orbWarm: {
+    orbSoft: {
       width: 180,
       height: 180,
+      backgroundColor: theme.orbSecondary,
+      top: 340,
+      left: -72,
+    },
+    orbWarm: {
+      width: 150,
+      height: 150,
       backgroundColor: theme.orbTertiary,
-      bottom: 40,
-      right: -60,
+      bottom: 56,
+      right: -44,
     },
     content: {
       paddingHorizontal: isCompact ? 14 : 18,
-      paddingTop: 6,
-      paddingBottom: 96,
+      paddingTop: 4,
+      paddingBottom: 88,
     },
     screenHeader: {
       paddingHorizontal: 2,
-      paddingTop: 6,
-      paddingBottom: 12,
+      paddingTop: 4,
+      paddingBottom: 10,
     },
     screenHeaderTitle: {
-      fontSize: isCompact ? 22 : 24,
-      lineHeight: isCompact ? 27 : 30,
+      fontSize: isCompact ? 20 : 22,
+      lineHeight: isCompact ? 24 : 27,
       fontWeight: '800',
       color: theme.text,
-      marginBottom: 6,
+      marginBottom: 4,
     },
     screenHeaderSubtitle: {
-      fontSize: 12,
-      lineHeight: 18,
+      fontSize: 10,
+      lineHeight: 15,
       color: theme.textMuted,
-      maxWidth: 360,
+      maxWidth: 280,
     },
     heroCard: {
       backgroundColor: theme.hero,
       borderRadius: 26,
-      padding: isCompact ? 16 : 18,
-      marginBottom: 12,
+      padding: isCompact ? 14 : 18,
+      marginBottom: 10,
+      borderWidth: 1,
+      borderColor: theme.divider,
       shadowColor: theme.heroShadow,
-      shadowOpacity: 0.12,
-      shadowRadius: 16,
-      shadowOffset: { width: 0, height: 8 },
-      elevation: 4,
+      shadowOpacity: 0.04,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 2,
     },
     heroTopRow: {
       flexDirection: 'row',
@@ -7966,13 +9105,13 @@ const createStyles = (
       justifyContent: 'space-between',
       alignItems: 'center',
       gap: 10,
-      marginBottom: 12,
+      marginBottom: 10,
     },
     monthChip: {
       backgroundColor: theme.heroChip,
       borderRadius: 999,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
+      paddingHorizontal: 11,
+      paddingVertical: 6,
     },
     monthChipText: {
       color: theme.heroChipText,
@@ -7983,8 +9122,8 @@ const createStyles = (
     },
     statusPill: {
       borderRadius: 999,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
+      paddingHorizontal: 11,
+      paddingVertical: 6,
     },
     statusPillGood: {
       backgroundColor: theme.heroStatusGood,
@@ -8003,18 +9142,18 @@ const createStyles = (
       color: theme.heroStatusAlertText,
     },
     heroTitle: {
-      fontSize: isCompact ? 24 : 28,
+      fontSize: isCompact ? 24 : 27,
       lineHeight: isCompact ? 29 : 32,
       fontWeight: '800',
-      color: theme.heroText,
+      color: theme.text,
       marginBottom: 6,
     },
     heroSubtitle: {
       fontSize: 14,
-      lineHeight: 20,
-      color: theme.heroMuted,
-      maxWidth: isCompact ? undefined : 320,
-      marginBottom: 4,
+      lineHeight: 19,
+      color: theme.textMuted,
+      maxWidth: isCompact ? undefined : 280,
+      marginBottom: 10,
     },
     storageCaption: {
       fontSize: 11,
@@ -8025,7 +9164,7 @@ const createStyles = (
       color: theme.heroChipText,
     },
     storageCaptionWarning: {
-      color: theme.heroMuted,
+      color: theme.textMuted,
     },
     storageCaptionError: {
       color: '#FFD0C8',
@@ -8033,14 +9172,16 @@ const createStyles = (
     limitPanel: {
       backgroundColor: theme.heroPanel,
       borderRadius: 20,
-      padding: 14,
+      padding: 12,
       marginBottom: 10,
+      borderWidth: 1,
+      borderColor: theme.divider,
     },
     limitLabel: {
-      fontSize: 12,
+      fontSize: 11,
       fontWeight: '700',
-      color: theme.accentText,
-      marginBottom: 8,
+      color: theme.textMuted,
+      marginBottom: 6,
     },
     limitInputShell: {
       flexDirection: 'row',
@@ -8048,7 +9189,25 @@ const createStyles = (
       backgroundColor: theme.heroPanelSoft,
       borderRadius: 16,
       paddingHorizontal: 12,
-      paddingVertical: 5,
+      paddingVertical: 3,
+    },
+    limitDisplayShell: {
+      backgroundColor: theme.heroPanelSoft,
+      borderRadius: 16,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 3,
+    },
+    limitDisplayValue: {
+      color: theme.text,
+      fontSize: isCompact ? 22 : 24,
+      fontWeight: '800',
+    },
+    limitDisplayMeta: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '600',
+      lineHeight: 14,
     },
     limitPrefix: {
       fontSize: 16,
@@ -8058,16 +9217,16 @@ const createStyles = (
     },
     limitInput: {
       flex: 1,
-      fontSize: 24,
+      fontSize: 22,
       fontWeight: '800',
       color: theme.text,
       paddingVertical: 6,
     },
     progressTrack: {
-      height: 10,
+      height: 8,
       backgroundColor: theme.progressTrack,
       borderRadius: 999,
-      marginTop: 16,
+      marginTop: 12,
       overflow: 'hidden',
     },
     progressFill: {
@@ -8087,7 +9246,7 @@ const createStyles = (
       flexDirection: 'row',
       flexWrap: 'wrap',
       justifyContent: 'space-between',
-      marginTop: 10,
+      marginTop: 8,
       gap: 10,
     },
     progressCaption: {
@@ -8102,47 +9261,49 @@ const createStyles = (
     metricTile: {
       flexBasis: isCompact ? '31%' : 0,
       flexGrow: 1,
-      backgroundColor: 'rgba(255,255,255,0.08)',
+      backgroundColor: theme.heroPanelSoft,
       borderRadius: 16,
-      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      paddingHorizontal: 10,
       paddingVertical: 10,
     },
     metricTileLabel: {
-      color: theme.heroMuted,
-      fontSize: 11,
+      color: theme.textMuted,
+      fontSize: 10,
       marginBottom: 4,
     },
     metricTileValue: {
-      color: theme.heroText,
+      color: theme.text,
       fontWeight: '800',
       fontSize: isNarrow ? 14 : 16,
     },
     metricTileValueGood: {
-      color: theme.heroText,
+      color: theme.text,
     },
     metricTileValueAlert: {
-      color: '#FFDCD2',
+      color: theme.alertText,
     },
     card: {
       backgroundColor: theme.surface,
       borderRadius: 20,
-      padding: 14,
-      marginBottom: 12,
+      padding: 12,
+      marginBottom: 10,
       shadowColor: theme.shadow,
-      shadowOpacity: 0.03,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 5 },
+      shadowOpacity: 0.02,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
       elevation: 1,
     },
     trendCard: {
       backgroundColor: theme.surface,
       borderRadius: 20,
-      padding: 14,
-      marginBottom: 12,
+      padding: 12,
+      marginBottom: 10,
       shadowColor: theme.shadow,
-      shadowOpacity: 0.03,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 5 },
+      shadowOpacity: 0.02,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
       elevation: 1,
     },
     sectionHeader: {
@@ -8150,7 +9311,7 @@ const createStyles = (
       justifyContent: 'space-between',
       gap: 10,
       alignItems: isCompact ? 'stretch' : 'flex-start',
-      marginBottom: 12,
+      marginBottom: 10,
     },
     sectionHeaderCopy: {
       flex: 1,
@@ -8275,17 +9436,17 @@ const createStyles = (
       color: theme.alertText,
     },
     sectionTitle: {
-      fontSize: 17,
-      lineHeight: 22,
+      fontSize: 16,
+      lineHeight: 20,
       fontWeight: '800',
       color: theme.text,
     },
     sectionSubtitle: {
       fontSize: 11,
-      lineHeight: 17,
+      lineHeight: 16,
       color: theme.textMuted,
-      marginTop: 4,
-      maxWidth: isCompact ? undefined : 300,
+      marginTop: 3,
+      maxWidth: isCompact ? undefined : 280,
     },
     secondaryButton: {
       backgroundColor: theme.surfaceTint,
@@ -8459,15 +9620,15 @@ const createStyles = (
     },
     settingsOverviewText: {
       color: theme.textMuted,
-      fontSize: 12,
-      lineHeight: 18,
-      marginTop: 8,
+      fontSize: 11,
+      lineHeight: 16,
+      marginTop: 6,
     },
     settingsSectionRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
-      marginTop: 12,
+      marginTop: 6,
     },
     settingsSectionChip: {
       backgroundColor: theme.surfaceSoft,
@@ -8491,11 +9652,11 @@ const createStyles = (
     },
     accountBanner: {
       backgroundColor: theme.surfaceMuted,
-      borderRadius: 22,
+      borderRadius: 18,
       borderWidth: 1,
       borderColor: theme.divider,
-      padding: 14,
-      marginBottom: 14,
+      padding: 12,
+      marginBottom: 12,
     },
     accountCopy: {
       gap: 5,
@@ -8509,16 +9670,30 @@ const createStyles = (
       color: theme.textMuted,
       lineHeight: 19,
     },
-    bankAccountList: {
-      gap: 10,
-      marginTop: 14,
-    },
-    bankAccountRow: {
+    accountDeletionPanel: {
       backgroundColor: theme.surfaceMuted,
       borderRadius: 18,
       borderWidth: 1,
       borderColor: theme.divider,
-      padding: 10,
+      padding: 12,
+      marginTop: 12,
+    },
+    accountDeletionTitle: {
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '800',
+      marginBottom: 6,
+    },
+    bankAccountList: {
+      gap: 8,
+      marginTop: 10,
+    },
+    bankAccountRow: {
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      padding: 9,
       gap: 8,
     },
     bankAccountCopy: {
@@ -8563,6 +9738,26 @@ const createStyles = (
       paddingHorizontal: 12,
       paddingTop: 8,
       paddingBottom: 4,
+    },
+    fieldCardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 8,
+    },
+    fieldAccessoryButton: {
+      backgroundColor: theme.surface,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      alignSelf: 'flex-start',
+    },
+    fieldAccessoryButtonText: {
+      color: theme.accentText,
+      fontSize: 10,
+      fontWeight: '800',
     },
     fieldWide: {
       flex: 1,
@@ -8616,7 +9811,7 @@ const createStyles = (
     },
     selectionChip: {
       borderRadius: 14,
-      paddingHorizontal: 10,
+      paddingHorizontal: 9,
       paddingVertical: 6,
     },
     selectionChipActive: {
@@ -8658,7 +9853,7 @@ const createStyles = (
     },
     heroActionStack: {
       gap: 8,
-      marginTop: 2,
+      marginTop: 4,
     },
     heroPrimaryButton: {
       alignSelf: 'flex-start',
@@ -8667,44 +9862,44 @@ const createStyles = (
     heroSecondaryRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 8,
+      gap: 6,
     },
     primaryButton: {
       backgroundColor: theme.accent,
       borderRadius: 15,
-      paddingHorizontal: 16,
+      paddingHorizontal: 15,
       paddingVertical: 10,
       alignItems: 'center',
     },
     primaryButtonText: {
       color: theme.heroText,
       fontWeight: '800',
-      fontSize: 13,
+      fontSize: 12,
     },
     ghostButton: {
       backgroundColor: theme.surfaceStrong,
       borderRadius: 15,
-      paddingHorizontal: 14,
-      paddingVertical: 9,
+      paddingHorizontal: 13,
+      paddingVertical: 8,
       alignItems: 'center',
     },
     ghostButtonText: {
       color: theme.accentText,
       fontWeight: '800',
-      fontSize: 12,
+      fontSize: 11,
     },
     tertiaryButton: {
       backgroundColor: theme.surfaceTint,
       borderRadius: 999,
       paddingHorizontal: 10,
-      paddingVertical: 7,
+      paddingVertical: 6,
       alignItems: 'center',
       alignSelf: 'flex-start',
       maxWidth: '100%',
     },
     tertiaryButtonText: {
       color: theme.accentText,
-      fontSize: 11,
+      fontSize: 10,
       fontWeight: '800',
     },
     sheetBackdrop: {
@@ -8722,7 +9917,7 @@ const createStyles = (
       paddingHorizontal: 14,
       paddingTop: 10,
       paddingBottom: 18,
-      maxHeight: '88%',
+      maxHeight: '86%',
       shadowColor: theme.shadow,
       shadowOpacity: 0.08,
       shadowRadius: 16,
@@ -8764,6 +9959,175 @@ const createStyles = (
     },
     sheetContent: {
       paddingBottom: 14,
+    },
+    paywallHero: {
+      backgroundColor: theme.heroPanel,
+      borderRadius: 24,
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      marginBottom: 14,
+      gap: 12,
+    },
+    paywallHeroCopy: {
+      gap: 6,
+    },
+    paywallEyebrow: {
+      color: theme.accentText,
+      fontSize: 11,
+      fontWeight: '800',
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
+    },
+    paywallTitle: {
+      color: theme.text,
+      fontSize: isCompact ? 24 : 28,
+      lineHeight: isCompact ? 29 : 33,
+      fontWeight: '900',
+    },
+    paywallSubtitle: {
+      color: theme.textMuted,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    paywallFeatureList: {
+      gap: 10,
+      marginBottom: 14,
+    },
+    paywallFeatureRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    paywallFeatureDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 999,
+      backgroundColor: theme.accent,
+    },
+    paywallFeatureText: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
+    paywallPlanStack: {
+      gap: 10,
+      marginBottom: 12,
+    },
+    paywallPlanCard: {
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      backgroundColor: theme.surfaceMuted,
+      padding: 14,
+      gap: 10,
+    },
+    paywallPlanCardPrimary: {
+      backgroundColor: theme.accentSoft,
+      borderColor: theme.accentBorder,
+    },
+    paywallPlanHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: 10,
+    },
+    paywallPlanCopy: {
+      flex: 1,
+      gap: 4,
+    },
+    paywallPlanTitle: {
+      color: theme.text,
+      fontSize: 18,
+      fontWeight: '900',
+    },
+    paywallPlanTitlePrimary: {
+      color: theme.accentText,
+    },
+    paywallPlanPrice: {
+      color: theme.text,
+      fontSize: 21,
+      fontWeight: '900',
+    },
+    paywallPlanMeta: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+      fontWeight: '600',
+    },
+    paywallPlanBadge: {
+      alignSelf: 'flex-start',
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      backgroundColor: theme.surfaceTint,
+    },
+    paywallPlanBadgePrimary: {
+      backgroundColor: theme.accent,
+    },
+    paywallPlanBadgeText: {
+      color: theme.accentText,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    paywallPlanBadgeTextPrimary: {
+      color: theme.heroText,
+    },
+    paywallPlanDescription: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    paywallPlanButton: {
+      borderRadius: 16,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      backgroundColor: theme.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: theme.divider,
+    },
+    paywallPlanButtonPrimary: {
+      backgroundColor: theme.accent,
+      borderColor: theme.accentBorder,
+    },
+    paywallPlanButtonText: {
+      color: theme.accentText,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    paywallPlanButtonTextPrimary: {
+      color: theme.heroText,
+    },
+    inlineAssistCard: {
+      marginTop: 10,
+      marginBottom: 6,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      backgroundColor: theme.surfaceMuted,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      flexDirection: isCompact ? 'column' : 'row',
+      alignItems: isCompact ? 'flex-start' : 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    inlineAssistCopy: {
+      flex: 1,
+      gap: 4,
+    },
+    inlineAssistTitle: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    inlineAssistText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
     },
     planLimitActionButton: {
       width: '100%',
@@ -8912,9 +10276,9 @@ const createStyles = (
     },
     bottomNav: {
       flexDirection: 'row',
-      gap: 8,
+      gap: 6,
       paddingHorizontal: isCompact ? 12 : 16,
-      paddingTop: 8,
+      paddingTop: 7,
       paddingBottom: 12,
       backgroundColor: `${theme.background}F2`,
       borderTopWidth: 1,
@@ -8925,21 +10289,21 @@ const createStyles = (
       borderRadius: 18,
       paddingVertical: 8,
       paddingHorizontal: 6,
-      backgroundColor: theme.surfaceStrong,
+      backgroundColor: 'transparent',
       alignItems: 'center',
-      gap: 3,
+      gap: 6,
     },
     bottomNavItemActive: {
+      backgroundColor: theme.surface,
+    },
+    bottomNavMarker: {
+      width: 18,
+      height: 3,
+      borderRadius: 999,
+      backgroundColor: 'transparent',
+    },
+    bottomNavMarkerActive: {
       backgroundColor: theme.accent,
-    },
-    bottomNavIcon: {
-      color: theme.textMuted,
-      fontSize: 11,
-      fontWeight: '900',
-      letterSpacing: 0.4,
-    },
-    bottomNavIconActive: {
-      color: theme.heroText,
     },
     bottomNavText: {
       color: theme.textMuted,
@@ -8947,7 +10311,7 @@ const createStyles = (
       fontSize: isNarrow ? 10 : 11,
     },
     bottomNavTextActive: {
-      color: theme.heroText,
+      color: theme.text,
     },
     buttonDisabled: {
       opacity: 0.58,
@@ -9040,7 +10404,7 @@ const createStyles = (
       alignSelf: 'stretch',
     },
     currentBudgetList: {
-      gap: 10,
+      gap: 8,
     },
     currentBudgetRow: {
       backgroundColor: theme.surfaceMuted,
@@ -9082,12 +10446,12 @@ const createStyles = (
     },
     currentBudgetName: {
       color: theme.text,
-      fontSize: 14,
+      fontSize: 15,
       fontWeight: '800',
     },
     currentBudgetMeta: {
       color: theme.textMuted,
-      fontSize: 11,
+      fontSize: 12,
       lineHeight: 15,
     },
     currentBudgetRowMeta: {
@@ -9179,15 +10543,15 @@ const createStyles = (
       width: '100%',
     },
     swipeRail: {
-      gap: 8,
+      gap: 6,
       justifyContent: 'center',
-      paddingLeft: 8,
+      paddingLeft: 6,
       paddingRight: 2,
     },
     swipeRailButton: {
       flex: 1,
-      minHeight: 48,
-      borderRadius: 16,
+      minHeight: 44,
+      borderRadius: 15,
       backgroundColor: theme.surfaceStrong,
       alignItems: 'center',
       justifyContent: 'center',
@@ -9685,8 +11049,8 @@ const createStyles = (
     filterChip: {
       backgroundColor: theme.surfaceSoft,
       borderRadius: 999,
-      paddingHorizontal: 11,
-      paddingVertical: 7,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
     },
     filterChipActive: {
       backgroundColor: theme.accent,
@@ -9734,12 +11098,12 @@ const createStyles = (
     },
     transactionCard: {
       backgroundColor: theme.surfaceMuted,
-      borderRadius: 22,
+      borderRadius: 20,
       borderWidth: 1,
       borderColor: theme.divider,
-      padding: 14,
-      gap: 12,
-      marginBottom: 10,
+      padding: 12,
+      gap: 10,
+      marginBottom: 8,
     },
     transactionCardHeader: {
       flexDirection: 'row',
@@ -9755,9 +11119,9 @@ const createStyles = (
       minWidth: 0,
     },
     transactionIcon: {
-      width: 42,
-      height: 42,
-      borderRadius: 14,
+      width: 38,
+      height: 38,
+      borderRadius: 12,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -9783,8 +11147,8 @@ const createStyles = (
     transactionAmount: {
       color: theme.text,
       fontWeight: '800',
-      fontSize: isNarrow ? 18 : 20,
-      lineHeight: isNarrow ? 22 : 24,
+      fontSize: isNarrow ? 17 : 19,
+      lineHeight: isNarrow ? 21 : 23,
       textAlign: 'right',
     },
     transactionTagRow: {
@@ -9795,7 +11159,7 @@ const createStyles = (
     transactionTag: {
       backgroundColor: theme.surfaceSoft,
       borderRadius: 999,
-      paddingHorizontal: 8,
+      paddingHorizontal: 7,
       paddingVertical: 4,
     },
     transactionTagGood: {
@@ -9828,15 +11192,15 @@ const createStyles = (
     },
     emptyState: {
       backgroundColor: theme.surfaceMuted,
-      borderRadius: 22,
-      padding: 18,
+      borderRadius: 18,
+      padding: 14,
       alignItems: 'center',
       marginTop: 12,
     },
     emptyStateCompact: {
       backgroundColor: theme.surfaceMuted,
-      borderRadius: 18,
-      padding: 14,
+      borderRadius: 16,
+      padding: 12,
       alignItems: 'flex-start',
       gap: 10,
       marginTop: 10,
@@ -9869,29 +11233,29 @@ const createStyles = (
     },
     planFinishCard: {
       backgroundColor: theme.surfaceTint,
-      borderRadius: 24,
-      padding: 16,
-      marginTop: 18,
+      borderRadius: 20,
+      padding: 13,
+      marginTop: 12,
       borderWidth: 1,
       borderColor: theme.divider,
     },
     planFinishTitle: {
       color: theme.text,
-      fontSize: 18,
+      fontSize: 16,
       fontWeight: '800',
       marginBottom: 6,
     },
     planFinishText: {
       color: theme.textMuted,
-      fontSize: 13,
-      lineHeight: 19,
-      marginBottom: 14,
+      fontSize: 12,
+      lineHeight: 17,
+      marginBottom: 12,
     },
     compactHighlightRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
-      marginBottom: 14,
+      marginBottom: 10,
     },
     compactHighlightChip: {
       backgroundColor: theme.surface,
@@ -9941,8 +11305,8 @@ const createStyles = (
       flexBasis: isNarrow ? '100%' : '48%',
       flexGrow: 1,
       backgroundColor: theme.surfaceMuted,
-      borderRadius: 18,
-      padding: 12,
+      borderRadius: 16,
+      padding: 10,
       borderWidth: 1,
       borderColor: theme.divider,
     },
@@ -9975,18 +11339,18 @@ const createStyles = (
     weeklyInsightMiniCard: {
       flex: 1,
       backgroundColor: theme.surfaceMuted,
-      borderRadius: 16,
-      paddingHorizontal: 8,
-      paddingVertical: 9,
+      borderRadius: 14,
+      paddingHorizontal: 6,
+      paddingVertical: 8,
       borderWidth: 1,
       borderColor: theme.divider,
       alignItems: 'center',
-      gap: 5,
+      gap: 4,
       minWidth: 0,
     },
     weeklyInsightMiniLabel: {
       color: theme.text,
-      fontSize: 10,
+      fontSize: 9,
       fontWeight: '800',
     },
     weeklyInsightMiniState: {
@@ -10000,7 +11364,7 @@ const createStyles = (
     },
     weeklyInsightMiniTrack: {
       width: '100%',
-      height: 82,
+      height: 58,
       justifyContent: 'flex-end',
       alignItems: 'center',
       position: 'relative',
@@ -10016,9 +11380,9 @@ const createStyles = (
       backgroundColor: theme.divider,
     },
     weeklyInsightMiniFill: {
-      width: '46%',
+      width: '50%',
       minWidth: 18,
-      maxWidth: 28,
+      maxWidth: 30,
       borderRadius: 12,
       overflow: 'hidden',
       justifyContent: 'flex-end',
@@ -10034,7 +11398,7 @@ const createStyles = (
     },
     weeklyInsightMiniAmount: {
       color: theme.text,
-      fontSize: 10,
+      fontSize: 9,
       fontWeight: '800',
       textAlign: 'center',
     },
@@ -10044,7 +11408,7 @@ const createStyles = (
       fontWeight: '700',
       textAlign: 'center',
       lineHeight: 11,
-      minHeight: 22,
+      minHeight: 20,
     },
     weeklyInsightRow: {
       backgroundColor: theme.surfaceMuted,

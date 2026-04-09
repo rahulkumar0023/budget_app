@@ -364,7 +364,7 @@ const finalizeImportedState = (
 
   return normalizeBudgetAppState(
     {
-      version: 4,
+      version: 5,
       activeMonthId: requestedActiveMonthId || nextMonths[0].id,
       months: nextMonths,
       accounts: [...accounts.values()],
@@ -512,6 +512,7 @@ export const importLedgerCsv = (csv: string, referenceDate = new Date()) => {
     [],
     {
       appThemeId: 'sunrise',
+      cloudBackupEnabled: false,
       currencyCode: defaultCurrencyCode,
       languageCode: defaultLanguageCode,
       recentCurrencyCodes: [],
@@ -591,6 +592,7 @@ export const buildWorkbookBase64 = (appState: BudgetAppState) => {
     {
       activeMonthId: appState.activeMonthId,
       appThemeId: appState.preferences.appThemeId,
+      cloudBackupEnabled: appState.preferences.cloudBackupEnabled,
       currencyCode: appState.preferences.currencyCode,
       languageCode: appState.preferences.languageCode,
       recentCurrencyCodes: appState.preferences.recentCurrencyCodes.join('|'),
@@ -756,6 +758,10 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
       ? preferencesRow.activeMonthId
       : undefined;
   const appThemeId = preferencesRow ? normalizeAppThemeId(preferencesRow.appThemeId) : 'sunrise';
+  const cloudBackupEnabled =
+    preferencesRow && typeof preferencesRow.cloudBackupEnabled === 'boolean'
+      ? preferencesRow.cloudBackupEnabled
+      : false;
   const currencyCode = preferencesRow
     ? normalizeCurrencyCode(preferencesRow.currencyCode)
     : defaultCurrencyCode;
@@ -773,7 +779,14 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
     months,
     accounts,
     goals,
-    { appThemeId, currencyCode, languageCode, recentCurrencyCodes, recentLanguageCodes },
+    {
+      appThemeId,
+      cloudBackupEnabled,
+      currencyCode,
+      languageCode,
+      recentCurrencyCodes,
+      recentLanguageCodes,
+    },
     referenceDate,
     activeMonthId,
   );
@@ -1128,6 +1141,7 @@ export const importISaveMoneyPdfText = (text: string, referenceDate = new Date()
     [],
     {
       appThemeId: 'sunrise',
+      cloudBackupEnabled: false,
       currencyCode: defaultCurrencyCode,
       languageCode: defaultLanguageCode,
       recentCurrencyCodes: [],

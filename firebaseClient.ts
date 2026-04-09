@@ -3,17 +3,20 @@ import { getApp, getApps, initializeApp } from 'firebase/app';
 import {
   EmailAuthProvider,
   createUserWithEmailAndPassword,
+  deleteUser,
   getAuth,
   initializeAuth,
   linkWithCredential,
   onAuthStateChanged,
+  reauthenticateWithCredential,
+  sendPasswordResetEmail,
   signInAnonymously,
   signInWithEmailAndPassword,
   signOut,
   type Persistence,
   type User,
 } from 'firebase/auth';
-import { doc, getDoc, getFirestore, setDoc } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, getFirestore, setDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Platform } from 'react-native';
 import type { BudgetAppState } from './budgetModel';
@@ -494,8 +497,37 @@ export const signInBudgetPasswordUser = async (email: string, password: string) 
   return toBudgetAuthUser(credential.user);
 };
 
+export const sendBudgetPasswordReset = async (email: string) => {
+  await sendPasswordResetEmail(getBudgetAuth(), email.trim().toLowerCase());
+};
+
 export const signOutBudgetUser = async () => {
   await signOut(getBudgetAuth());
+};
+
+export const deleteBudgetUserAccount = async (password: string) => {
+  const auth = getBudgetAuth();
+  const currentUser = auth.currentUser;
+
+  if (!currentUser || currentUser.isAnonymous || !currentUser.email) {
+    throw { code: 'auth/requires-recent-login' };
+  }
+
+  const normalizedPassword = password.trim();
+
+  if (!normalizedPassword) {
+    throw { code: 'auth/missing-password' };
+  }
+
+  const credential = EmailAuthProvider.credential(currentUser.email.trim().toLowerCase(), normalizedPassword);
+  await reauthenticateWithCredential(currentUser, credential);
+
+  await Promise.allSettled([
+    deleteDoc(doc(firestore, 'users', currentUser.uid, 'budget', 'app')),
+    deleteDoc(doc(firestore, 'users', currentUser.uid, 'budget', 'dashboard')),
+  ]);
+
+  await deleteUser(currentUser);
 };
 
 export const loadBudgetCloudState = async (userId: string): Promise<unknown | null> => {

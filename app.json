@@ -2,11 +2,31 @@
   "expo": {
     "name": "Budget Buddy",
     "slug": "budget-buddy",
+    "description": "Local-first budget planning with optional AI reviews and recoverable backup.",
     "version": "1.0.0",
+    "scheme": "budgetbuddy",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.rahulkumar.budgetbuddy",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
     "plugins": [
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-document-picker"
     ]
   }
 }

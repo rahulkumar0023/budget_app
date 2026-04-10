@@ -5,6 +5,7 @@ import DateTimePicker, {
 } from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
+import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
 import { extractText as extractPdfText, isAvailable as isPdfTextExtractAvailable } from 'expo-pdf-text-extract';
 import { StatusBar } from 'expo-status-bar';
@@ -13,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   type DimensionValue,
+  FlatList,
   LayoutAnimation,
   Modal,
   Platform,
@@ -97,6 +99,9 @@ import {
   importLedgerCsv,
   importWorkbookBase64,
 } from './dataTransfer';
+import { AppToast } from './components/AppToast';
+import { BudgetCategoryRow } from './components/BudgetCategoryRow';
+import { TransactionListItem } from './components/TransactionListItem';
 import {
   createBudgetPasswordAccount,
   deleteBudgetUserAccount,
@@ -127,6 +132,7 @@ import {
   type PremiumPackageOption,
   type PurchaseSnapshot,
 } from './purchaseClient';
+import { useToast } from './hooks/useToast';
 
 type SaveState = 'hydrating' | 'saving' | 'saved' | 'error';
 type CloudState = 'connecting' | 'syncing' | 'synced' | 'local-only';
@@ -1213,6 +1219,7 @@ const getAuthErrorMessage = (error: unknown) => {
 };
 
 export default function App() {
+  const { toast, showToast, hideToast } = useToast();
   const [appState, setAppState] = useState<BudgetAppState>(() =>
     createInitialBudgetState(new Date()),
   );
@@ -1567,6 +1574,19 @@ export default function App() {
       }).format(value);
     } catch {
       return formatCurrency(value, currencyCode);
+    }
+  };
+  const triggerHaptic = async (tone: 'success' | 'warning' | 'error' = 'success') => {
+    try {
+      const feedbackType =
+        tone === 'success'
+          ? Haptics.NotificationFeedbackType.Success
+          : tone === 'warning'
+            ? Haptics.NotificationFeedbackType.Warning
+            : Haptics.NotificationFeedbackType.Error;
+      await Haptics.notificationAsync(feedbackType);
+    } catch {
+      // Ignore unsupported haptics environments.
     }
   };
   const localeMonthPreview = getMonthLabel(activeMonth.id, localeTag);
@@ -3633,7 +3653,11 @@ export default function App() {
     );
 
     if (duplicateAccount) {
-      Alert.alert('Account already exists', `${duplicateAccount.name} is already in your account list.`);
+      showToast({
+        message: `${duplicateAccount.name} is already in your account list.`,
+        tone: 'error',
+      });
+      void triggerHaptic('error');
       return;
     }
 
@@ -3669,6 +3693,11 @@ export default function App() {
 
     setIsAccountSheetOpen(false);
     resetAccountForm();
+    showToast({
+      message: editingAccountId ? `${trimmedName} updated.` : `${trimmedName} added to your accounts.`,
+      tone: 'success',
+    });
+    void triggerHaptic('success');
   };
 
   const editBankAccount = (account: BankAccount) => {
@@ -3710,6 +3739,9 @@ export default function App() {
               setIsAccountSheetOpen(false);
               resetAccountForm();
             }
+
+            showToast({ message: `${account.name} removed from your accounts.`, tone: 'success' });
+            void triggerHaptic('success');
           },
         },
       ],
@@ -4138,6 +4170,11 @@ export default function App() {
 
     setIsExpenseSheetOpen(false);
     resetTransactionForm();
+    showToast({
+      message: editingTransactionId ? 'Expense updated.' : 'Expense added.',
+      tone: 'success',
+    });
+    void triggerHaptic('success');
   };
 
   const editTransaction = (transaction: Transaction) => {
@@ -4164,11 +4201,14 @@ export default function App() {
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () =>
+        onPress: () => {
           updateActiveMonth((month) => ({
             ...month,
             transactions: month.transactions.filter((transaction) => transaction.id !== transactionId),
-          })),
+          }));
+          showToast({ message: 'Expense deleted.', tone: 'success' });
+          void triggerHaptic('success');
+        },
       },
     ]);
   };
@@ -4220,6 +4260,8 @@ export default function App() {
       resetCategoryForm();
       setShowPlanCategoryList(false);
       setPlanSetupStep('categories');
+      showToast({ message: `${trimmedName} added.`, tone: 'success' });
+      void triggerHaptic('success');
       return;
     }
 
@@ -4236,6 +4278,11 @@ export default function App() {
     );
     resetCategoryForm();
     setShowPlanCategoryList(false);
+    showToast({
+      message: editingCategoryId ? `${trimmedName} updated.` : `${trimmedName} added.`,
+      tone: 'success',
+    });
+    void triggerHaptic('success');
   };
 
   const editCategory = (category: Category) => {
@@ -4318,14 +4365,17 @@ export default function App() {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () =>
+          onPress: () => {
             updateActiveMonth((month) => ({
               ...month,
               categories: month.categories.filter((category) => category.id !== categoryId),
               transactions: month.transactions.filter(
                 (transaction) => transaction.categoryId !== categoryId,
               ),
-            })),
+            }));
+            showToast({ message: 'Category deleted.', tone: 'success' });
+            void triggerHaptic('success');
+          },
         },
       ],
     );
@@ -4381,6 +4431,11 @@ export default function App() {
     }));
 
     resetGoalForm();
+    showToast({
+      message: editingGoalId ? `${trimmedName} updated.` : `${trimmedName} added.`,
+      tone: 'success',
+    });
+    void triggerHaptic('success');
   };
 
   const editGoal = (goal: Goal) => {
@@ -4398,11 +4453,14 @@ export default function App() {
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () =>
+        onPress: () => {
           updateAppState((current) => ({
             ...current,
             goals: current.goals.filter((goal) => goal.id !== goalId),
-          })),
+          }));
+          showToast({ message: 'Goal deleted.', tone: 'success' });
+          void triggerHaptic('success');
+        },
       },
     ]);
   };
@@ -4416,7 +4474,10 @@ export default function App() {
       return;
     }
 
-    Alert.alert('File created', `Saved export file to ${uri}`);
+    showToast({
+      message: `File created at ${uri}`,
+      tone: 'success',
+    });
   };
 
   const applyImportedState = (nextState: BudgetAppState, successMessage: string) => {
@@ -4428,13 +4489,15 @@ export default function App() {
     setImportCleanupReview(null);
     setImportCleanupError('');
     navigateToScreen('home');
-    Alert.alert('Import complete', successMessage);
+    showToast({ message: successMessage, tone: 'success' });
+    void triggerHaptic('success');
   };
 
   const exportJsonBackup = async () => {
     try {
       if (!FileSystem.cacheDirectory) {
-        Alert.alert('Export unavailable', 'The device file cache is not available.');
+        showToast({ message: 'Export is unavailable because the device file cache is not ready.', tone: 'error' });
+        void triggerHaptic('error');
         return;
       }
 
@@ -4447,14 +4510,16 @@ export default function App() {
         UTI: 'public.json',
       });
     } catch {
-      Alert.alert('Export failed', 'The JSON backup could not be created.');
+      showToast({ message: 'The JSON backup could not be created.', tone: 'error' });
+      void triggerHaptic('error');
     }
   };
 
   const exportCsvLedger = async () => {
     try {
       if (!FileSystem.cacheDirectory) {
-        Alert.alert('Export unavailable', 'The device file cache is not available.');
+        showToast({ message: 'Export is unavailable because the device file cache is not ready.', tone: 'error' });
+        void triggerHaptic('error');
         return;
       }
 
@@ -4466,14 +4531,16 @@ export default function App() {
         UTI: 'public.comma-separated-values-text',
       });
     } catch {
-      Alert.alert('Export failed', 'The CSV ledger could not be created.');
+      showToast({ message: 'The CSV ledger could not be created.', tone: 'error' });
+      void triggerHaptic('error');
     }
   };
 
   const exportWorkbook = async () => {
     try {
       if (!FileSystem.cacheDirectory) {
-        Alert.alert('Export unavailable', 'The device file cache is not available.');
+        showToast({ message: 'Export is unavailable because the device file cache is not ready.', tone: 'error' });
+        void triggerHaptic('error');
         return;
       }
 
@@ -4486,7 +4553,8 @@ export default function App() {
         mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
     } catch {
-      Alert.alert('Export failed', 'The XLSX workbook could not be created.');
+      showToast({ message: 'The XLSX workbook could not be created.', tone: 'error' });
+      void triggerHaptic('error');
     }
   };
 
@@ -4510,7 +4578,8 @@ export default function App() {
         UTI: 'com.adobe.pdf',
       });
     } catch {
-      Alert.alert('Export failed', 'The PDF report could not be created.');
+      showToast({ message: 'The PDF report could not be created.', tone: 'error' });
+      void triggerHaptic('error');
     }
   };
 
@@ -4596,10 +4665,12 @@ export default function App() {
       }
 
       if (!normalized) {
-        Alert.alert(
-          'Import failed',
-          'That file could not be read. Use a Budget Buddy JSON backup, CSV ledger, XLSX workbook, an app-generated PDF report, or an iSaveMoney digital PDF export.',
-        );
+        showToast({
+          message:
+            'That file could not be read. Use a Budget Buddy JSON backup, CSV ledger, XLSX workbook, an app-generated PDF report, or an iSaveMoney digital PDF export.',
+          tone: 'error',
+        });
+        void triggerHaptic('error');
         return;
       }
 
@@ -4614,12 +4685,14 @@ export default function App() {
             : successMessage,
       );
     } catch (error) {
-      Alert.alert(
-        'Import failed',
-        error instanceof Error && error.message
-          ? error.message
-          : 'The selected file could not be imported.',
-      );
+      showToast({
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : 'The selected file could not be imported.',
+        tone: 'error',
+      });
+      void triggerHaptic('error');
     }
   };
 
@@ -6230,8 +6303,14 @@ export default function App() {
                   </View>
                 ) : null}
 
-                <View style={styles.currentBudgetList}>
-                  {visibleBudgetCategorySummaries.map((summary) => {
+                <FlatList
+                  data={visibleBudgetCategorySummaries}
+                  keyExtractor={(summary) => summary.category.id}
+                  scrollEnabled={false}
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.currentBudgetList}
+                  ItemSeparatorComponent={() => <View style={styles.listSpacer} />}
+                  renderItem={({ item: summary }) => {
                     const theme = categoryThemes[summary.category.themeId];
                     const previousMatch = previousCategorySummaryByName.get(
                       summary.category.name.trim().toLowerCase(),
@@ -6259,121 +6338,54 @@ export default function App() {
                         : summary.tone === 'warning'
                           ? 'Watch'
                           : null;
-                    const usageLabel = `${Math.round(clamp(summary.ratio) * 100)}%`;
 
                     return (
-                      <ScrollView
-                        key={summary.category.id}
-                        horizontal
-                        bounces={false}
-                        showsHorizontalScrollIndicator={false}
-                        directionalLockEnabled
-                        snapToOffsets={[0, swipeRailWidth]}
-                        decelerationRate="fast"
-                        contentContainerStyle={{ width: swipeViewportWidth + swipeRailWidth }}
-                        style={styles.swipeRowShell}
-                      >
-                        <Pressable
-                          style={[styles.currentBudgetRow, { width: swipeViewportWidth }]}
-                          onPress={() => openCategoryDetail(summary.category.id)}
-                        >
-                          <View style={styles.currentBudgetRowHeader}>
-                            <View style={styles.currentBudgetRowLead}>
-                              <View style={[styles.currentBudgetIcon, { backgroundColor: theme.bubble }]}>
-                                <Text style={[styles.currentBudgetIconText, { color: theme.bubbleText }]}>
-                                  {getCategoryIcon(summary.category.name)}
-                                </Text>
-                              </View>
-
-                              <View style={styles.currentBudgetCopy}>
-                                <Text style={styles.currentBudgetName}>{summary.category.name}</Text>
-                                <Text style={styles.currentBudgetMeta}>
-                                  {formatCurrency(summary.spent)} of {formatCurrency(summary.category.planned)}
-                                </Text>
-                              </View>
-                            </View>
-
-                            <View style={styles.currentBudgetAmountBlock}>
-                              <Text
-                                style={[
-                                  styles.currentBudgetAmount,
-                                  summary.left < 0 && styles.currentBudgetAmountAlert,
-                                ]}
-                              >
-                                {formatCurrency(summary.left)}
-                              </Text>
-                              <Text style={styles.currentBudgetAmountMeta}>
-                                {summary.left < 0 ? 'over' : 'left'}
-                              </Text>
-                            </View>
-                          </View>
-
-                          <View style={styles.currentBudgetRowMeta}>
-                            <View style={styles.currentBudgetRowMetaLeft}>
-                              <Text style={styles.currentBudgetRowDetail}>
-                                {detailBits.join(' • ')}
-                              </Text>
-                              {planDeltaLabel ? (
-                                <Text style={styles.currentBudgetCompareText}>{planDeltaLabel}</Text>
-                              ) : null}
-                            </View>
-                            <View style={styles.currentBudgetRowMetaRight}>
-                              {statusLabel ? (
-                                <View
-                                  style={[
-                                    styles.currentBudgetStatusChip,
-                                    summary.tone === 'warning'
-                                      ? styles.currentBudgetStatusChipWarning
-                                      : styles.currentBudgetStatusChipAlert,
-                                  ]}
-                                >
-                                  <Text
-                                    style={[
-                                      styles.currentBudgetStatusChipText,
-                                      summary.tone === 'warning'
-                                        ? styles.currentBudgetStatusChipTextWarning
-                                        : styles.currentBudgetStatusChipTextAlert,
-                                    ]}
-                                  >
-                                    {statusLabel}
-                                  </Text>
-                                </View>
-                              ) : null}
-                              <Text style={styles.currentBudgetUsageText}>{usageLabel}</Text>
-                            </View>
-                          </View>
-
-                          <View style={[styles.currentBudgetTrack, { backgroundColor: theme.track }]}>
-                            <View
-                              style={[
-                                styles.currentBudgetFill,
-                                {
-                                  backgroundColor: theme.fill,
-                                  width: `${Math.round(clamp(summary.ratio) * 100)}%`,
-                                },
-                              ]}
-                            />
-                          </View>
-                        </Pressable>
-
-                        <View style={[styles.swipeRail, { width: swipeRailWidth }]}>
-                          <Pressable
-                            style={[styles.swipeRailButton, styles.swipeRailButtonPrimary]}
-                            onPress={() => openExpenseCapture(summary.category.id, null)}
-                          >
-                            <Text style={styles.swipeRailButtonTextPrimary}>Add</Text>
-                          </Pressable>
-                          <Pressable
-                            style={styles.swipeRailButton}
-                            onPress={() => editCategory(summary.category)}
-                          >
-                            <Text style={styles.swipeRailButtonText}>Edit</Text>
-                          </Pressable>
-                        </View>
-                      </ScrollView>
+                      <BudgetCategoryRow
+                        swipeViewportWidth={swipeViewportWidth}
+                        swipeRailWidth={swipeRailWidth}
+                        icon={getCategoryIcon(summary.category.name)}
+                        name={summary.category.name}
+                        spentText={`${formatCurrency(summary.spent)} of ${formatCurrency(summary.category.planned)}`}
+                        leftText={formatCurrency(summary.left)}
+                        leftLabel={summary.left < 0 ? 'over' : 'left'}
+                        detailText={detailBits.join(' • ')}
+                        compareText={planDeltaLabel}
+                        statusLabel={statusLabel}
+                        statusTone={
+                          summary.tone === 'warning'
+                            ? 'warning'
+                            : summary.tone === 'alert'
+                              ? 'alert'
+                              : undefined
+                        }
+                        usageText={`${Math.round(clamp(summary.ratio) * 100)}%`}
+                        progressPercent={Math.round(clamp(summary.ratio) * 100)}
+                        isLeftNegative={summary.left < 0}
+                        palette={{
+                          surface: currentTheme.surfaceMuted,
+                          divider: currentTheme.divider,
+                          text: currentTheme.text,
+                          textMuted: currentTheme.textMuted,
+                          bubble: theme.bubble,
+                          bubbleText: theme.bubbleText,
+                          track: theme.track,
+                          fill: theme.fill,
+                          accentSoft: currentTheme.accentSoft,
+                          accentBorder: currentTheme.accentBorder,
+                          accentText: currentTheme.accentText,
+                          surfaceStrong: currentTheme.surfaceStrong,
+                          warningSurface: currentTheme.warningSurface,
+                          warningText: currentTheme.warningText,
+                          alertSurface: currentTheme.alertSurface,
+                          alertText: currentTheme.alertText,
+                        }}
+                        onOpen={() => openCategoryDetail(summary.category.id)}
+                        onAdd={() => openExpenseCapture(summary.category.id, null)}
+                        onEdit={() => editCategory(summary.category)}
+                      />
                     );
-                  })}
-                </View>
+                  }}
+                />
               </View>
             ) : (
               <View style={styles.card}>
@@ -6595,117 +6607,62 @@ export default function App() {
                   </Text>
                 </View>
               ) : (
-                visibleTransactions.map((transaction) => {
-                  const category = activeMonth.categories.find(
-                    (item) => item.id === transaction.categoryId,
-                  );
-                  const account = transaction.accountId ? accountMap.get(transaction.accountId) : null;
-                  const theme = category ? categoryThemes[category.themeId] : categoryThemes.citrus;
-                  const tone = categoryToneById.get(transaction.categoryId)?.tone ?? 'good';
-                  const title = getTransactionDisplayTitle(transaction, category?.name);
-                  const toneLabel =
-                    tone === 'alert' ? 'Over plan' : tone === 'warning' ? 'Watch' : 'Healthy';
+                <FlatList
+                  data={visibleTransactions}
+                  keyExtractor={(transaction) => transaction.id}
+                  scrollEnabled={false}
+                  showsVerticalScrollIndicator={false}
+                  ItemSeparatorComponent={() => <View style={styles.listSpacer} />}
+                  renderItem={({ item: transaction }) => {
+                    const category = activeMonth.categories.find(
+                      (item) => item.id === transaction.categoryId,
+                    );
+                    const account = transaction.accountId ? accountMap.get(transaction.accountId) : null;
+                    const theme = category ? categoryThemes[category.themeId] : categoryThemes.citrus;
+                    const tone = categoryToneById.get(transaction.categoryId)?.tone ?? 'good';
+                    const toneLabel =
+                      tone === 'alert' ? 'Over plan' : tone === 'warning' ? 'Watch' : 'Healthy';
 
-                  return (
-                    <ScrollView
-                      key={transaction.id}
-                      horizontal
-                      bounces={false}
-                      showsHorizontalScrollIndicator={false}
-                      directionalLockEnabled
-                      snapToOffsets={[0, swipeRailWidth]}
-                      decelerationRate="fast"
-                      contentContainerStyle={{ width: swipeViewportWidth + swipeRailWidth }}
-                      style={styles.swipeRowShell}
-                    >
-                      <View style={[styles.transactionCard, { width: swipeViewportWidth }]}>
-                        <View style={styles.transactionCardHeader}>
-                          <View style={styles.transactionLead}>
-                            <View style={[styles.transactionIcon, { backgroundColor: theme.bubble }]}>
-                              <Text style={[styles.transactionIconText, { color: theme.bubbleText }]}>
-                                {category ? getCategoryIcon(category.name) : '•'}
-                              </Text>
-                            </View>
-
-                            <View style={styles.transactionCopy}>
-                              <Text style={styles.transactionTitle}>{title}</Text>
-                              <Text style={styles.transactionMeta}>
-                                {formatTransactionDate(transaction.happenedAt, localeTag)}
-                              </Text>
-                            </View>
-                          </View>
-
-                          <Text style={styles.transactionAmount}>{formatCurrency(transaction.amount)}</Text>
-                        </View>
-
-                        <View style={styles.transactionTagRow}>
-                          <View style={[styles.transactionTag, { backgroundColor: theme.chip }]}>
-                            <Text style={[styles.transactionTagText, { color: theme.chipText }]}>
-                              {category?.name ?? 'Uncategorized'}
-                            </Text>
-                          </View>
-
-                          {transaction.subcategory ? (
-                            <View style={styles.transactionTag}>
-                              <Text style={styles.transactionTagText}>{transaction.subcategory}</Text>
-                            </View>
-                          ) : null}
-
-                          {account ? (
-                            <View style={styles.transactionTag}>
-                              <Text style={styles.transactionTagText}>{account.name}</Text>
-                            </View>
-                          ) : null}
-
-                          {transaction.recurring ? (
-                            <View style={styles.transactionTag}>
-                              <Text style={styles.transactionTagText}>Recurring</Text>
-                            </View>
-                          ) : null}
-
-                          <View
-                            style={[
-                              styles.transactionTag,
-                              tone === 'good'
-                                ? styles.transactionTagGood
-                                : tone === 'warning'
-                                  ? styles.transactionTagWarning
-                                  : styles.transactionTagAlert,
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.transactionTagText,
-                                tone === 'good'
-                                  ? styles.transactionTagTextGood
-                                  : tone === 'warning'
-                                    ? styles.transactionTagTextWarning
-                                    : styles.transactionTagTextAlert,
-                              ]}
-                            >
-                              {toneLabel}
-                            </Text>
-                          </View>
-                        </View>
-                      </View>
-
-                      <View style={[styles.swipeRail, { width: swipeRailWidth }]}>
-                        <Pressable
-                          style={[styles.swipeRailButton, styles.swipeRailButtonPrimary]}
-                          onPress={() => editTransaction(transaction)}
-                        >
-                          <Text style={styles.swipeRailButtonTextPrimary}>Edit</Text>
-                        </Pressable>
-                        <Pressable
-                          style={[styles.swipeRailButton, styles.swipeRailButtonDanger]}
-                          onPress={() => deleteTransaction(transaction.id)}
-                        >
-                          <Text style={styles.swipeRailButtonTextDanger}>Delete</Text>
-                        </Pressable>
-                      </View>
-                    </ScrollView>
-                  );
-                })
+                    return (
+                      <TransactionListItem
+                        swipeViewportWidth={swipeViewportWidth}
+                        swipeRailWidth={swipeRailWidth}
+                        icon={category ? getCategoryIcon(category.name) : '•'}
+                        title={getTransactionDisplayTitle(transaction, category?.name)}
+                        dateText={formatTransactionDate(transaction.happenedAt, localeTag)}
+                        amountText={formatCurrency(transaction.amount)}
+                        categoryLabel={category?.name ?? 'Uncategorized'}
+                        subcategoryLabel={transaction.subcategory}
+                        accountLabel={account?.name ?? null}
+                        recurring={transaction.recurring}
+                        tone={tone}
+                        toneLabel={toneLabel}
+                        palette={{
+                          surface: currentTheme.surfaceMuted,
+                          divider: currentTheme.divider,
+                          text: currentTheme.text,
+                          textMuted: currentTheme.textMuted,
+                          bubble: theme.bubble,
+                          bubbleText: theme.bubbleText,
+                          chip: theme.chip,
+                          chipText: theme.chipText,
+                          surfaceSoft: currentTheme.surfaceSoft,
+                          accentSoft: currentTheme.accentSoft,
+                          accentBorder: currentTheme.accentBorder,
+                          accentText: currentTheme.accentText,
+                          warningSurface: currentTheme.warningSurface,
+                          warningText: currentTheme.warningText,
+                          alertSurface: currentTheme.alertSurface,
+                          alertText: currentTheme.alertText,
+                          successSurface: currentTheme.successSurface,
+                          successText: currentTheme.successText,
+                        }}
+                        onEdit={() => editTransaction(transaction)}
+                        onDelete={() => deleteTransaction(transaction.id)}
+                      />
+                    );
+                  }}
+                />
               )}
 
               {hiddenTransactionCount > 0 ? (
@@ -9126,6 +9083,22 @@ export default function App() {
           </View>
         </View>
       </Modal>
+      <AppToast
+        toast={toast}
+        onDismiss={hideToast}
+        palette={{
+          text: currentTheme.text,
+          textMuted: currentTheme.textMuted,
+          surface: currentTheme.surface,
+          divider: currentTheme.divider,
+          successSurface: currentTheme.successSurface,
+          successText: currentTheme.successText,
+          alertSurface: currentTheme.alertSurface,
+          alertText: currentTheme.alertText,
+          accentSoft: currentTheme.accentSoft,
+          accentText: currentTheme.accentText,
+        }}
+      />
       <View style={styles.bottomNav}>
         {screenTabs.map((screenId) => (
           <Pressable
@@ -10629,6 +10602,9 @@ const createStyles = (
     },
     currentBudgetList: {
       gap: 8,
+    },
+    listSpacer: {
+      height: 8,
     },
     currentBudgetRow: {
       backgroundColor: theme.surfaceMuted,

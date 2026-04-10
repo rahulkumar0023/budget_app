@@ -50,10 +50,10 @@ const snapshotListeners = new Set<(snapshot: PurchaseSnapshot) => void>();
 
 const getUnavailableMessage = () => {
   if (Platform.OS !== 'ios') {
-    return 'Premium subscriptions are configured for iOS only right now.';
+    return 'Subscriptions are available on iPhone only right now.';
   }
 
-  return 'Premium purchases are not connected in this build yet.';
+  return 'Subscriptions are not ready in this build yet.';
 };
 
 const canUseRevenueCat = Platform.OS === 'ios' && Boolean(iosApiKey);
@@ -77,7 +77,7 @@ const normalizeRevenueCatError = (error: unknown) => {
     return candidate.code.trim();
   }
 
-  return 'Premium purchases are unavailable right now.';
+  return 'Subscriptions are unavailable right now.';
 };
 
 const buildSavingsHighlight = (annualPackage: PurchasesPackage, monthlyPackage: PurchasesPackage) => {
@@ -132,9 +132,9 @@ const buildPackageOptions = (offering: PurchasesOffering | null) => {
       id,
       description:
         kind === 'annual'
-          ? 'Unlock AI reviews, smart suggestions, and recoverable backup for the whole year.'
+          ? 'Get monthly check-ins, smart suggestions, and recovery backup for the whole year.'
           : kind === 'monthly'
-            ? 'Keep premium AI and backup flexible on a monthly plan.'
+            ? 'Keep the smart extras and recovery backup on a monthly plan.'
             : revenueCatPackage.product.description || 'Premium access',
       highlight,
       kind,

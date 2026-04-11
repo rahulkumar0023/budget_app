@@ -141,7 +141,7 @@ type TransactionSort = 'recent' | 'highest';
 type ActivityScope = 'today' | 'week' | 'month';
 type AuthMode = 'create' | 'signin';
 type ScreenId = 'home' | 'spend' | 'plan' | 'insights' | 'settings';
-type SettingsSection = 'appearance' | 'locale' | 'accounts' | 'cloud' | 'data';
+type SettingsSection = 'overview' | 'appearance' | 'locale' | 'accounts' | 'cloud' | 'data';
 type InsightWindow = 'quarter' | 'half' | 'year';
 type InsightSpendMode = 'all' | 'adjustable';
 type AlertTone = 'good' | 'warning' | 'alert';
@@ -1259,6 +1259,7 @@ export default function App() {
   const [expenseDate, setExpenseDate] = useState(() => new Date());
   const [expenseRecurring, setExpenseRecurring] = useState(false);
   const [showExpenseDatePicker, setShowExpenseDatePicker] = useState(false);
+  const [showExpenseDetails, setShowExpenseDetails] = useState(false);
   const [isExpenseSheetOpen, setIsExpenseSheetOpen] = useState(false);
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
   const [selectedCategoryDetailId, setSelectedCategoryDetailId] = useState<string | null>(null);
@@ -1300,7 +1301,7 @@ export default function App() {
   const [currencySearchQuery, setCurrencySearchQuery] = useState('');
   const [languageSearchQuery, setLanguageSearchQuery] = useState('');
   const [activeSettingsSection, setActiveSettingsSection] =
-    useState<SettingsSection>('appearance');
+    useState<SettingsSection>('overview');
   const [showAllBankAccounts, setShowAllBankAccounts] = useState(false);
   const [transactionFilter, setTransactionFilter] = useState<TransactionFilter>('all');
   const [transactionSort, setTransactionSort] = useState<TransactionSort>('recent');
@@ -1339,7 +1340,7 @@ export default function App() {
     220,
     width - contentHorizontalPadding * 2 - cardHorizontalPadding * 2,
   );
-  const budgetStageMinHeight = Math.max(isCompact ? 520 : 560, height - (isCompact ? 176 : 208));
+  const budgetStageMinHeight = Math.max(isCompact ? 420 : 460, height - (isCompact ? 288 : 332));
 
   const currentTheme = appThemes[appState.preferences.appThemeId];
   const currentCurrencyCode = appState.preferences.currencyCode;
@@ -2483,6 +2484,22 @@ export default function App() {
     () => categorySummaries.reduce((sum, summary) => sum + summary.thisWeek, 0),
     [categorySummaries],
   );
+  const fixedLeftTotal = useMemo(
+    () =>
+      categorySummaries.reduce(
+        (sum, summary) => sum + (summary.category.recurring ? Math.max(summary.left, 0) : 0),
+        0,
+      ),
+    [categorySummaries],
+  );
+  const flexibleLeftTotal = useMemo(
+    () =>
+      categorySummaries.reduce(
+        (sum, summary) => sum + (!summary.category.recurring ? Math.max(summary.left, 0) : 0),
+        0,
+      ),
+    [categorySummaries],
+  );
   const budgetSpotlightLabel = hasActiveBudget
     ? remaining < 0
       ? 'Over the line'
@@ -2507,7 +2524,6 @@ export default function App() {
   const budgetHeroSupportLabel = hasActiveBudget
     ? `${getMonthLabel(activeMonth.id, localeTag)} · ${categorySummaries.length} lane${categorySummaries.length === 1 ? '' : 's'}`
     : `${getMonthLabel(activeMonth.id, localeTag)} · build the month`;
-  const budgetOrbitRotation = `${-135 + clamp(monthlyProgress) * 270}deg`;
   const budgetFocusSummary = priorityBudgetCategorySummaries[0] ?? healthyBudgetCategorySummaries[0] ?? null;
   const activityScopeLabel =
     activityScope === 'today'
@@ -2728,30 +2744,32 @@ export default function App() {
     home: {
       label: 'Budget',
       title: 'Budget',
-      subtitle: 'This month at a glance.',
+      subtitle: 'This month.',
     },
     spend: {
       label: 'Activity',
       title: 'Activity',
-      subtitle: 'Quick adds and recent moves.',
+      subtitle: 'Recent moves.',
     },
     plan: {
-      label: 'Plan',
-      title: 'Plan',
-      subtitle: 'Shape the month your way.',
+      label: 'Edit budget',
+      title: 'Edit budget',
+      subtitle: 'Categories, limits, and goals.',
     },
     insights: {
-      label: 'Insights',
-      title: 'Insights',
-      subtitle: 'Patterns, pace, and next moves.',
+      label: 'Bigger picture',
+      title: 'Bigger picture',
+      subtitle: 'Patterns and pacing.',
     },
     settings: {
-      label: 'Settings',
-      title: 'Settings',
-      subtitle: 'Look, recovery, and data.',
+      label: 'More',
+      title: 'More',
+      subtitle: 'Planning, recovery, and tools.',
     },
   };
-  const screenTabs: ScreenId[] = ['home', 'spend', 'plan', 'insights', 'settings'];
+  const screenTabs: ScreenId[] = ['home', 'spend', 'settings'];
+  const activeNavScreen: ScreenId =
+    activeScreen === 'plan' || activeScreen === 'insights' ? 'settings' : activeScreen;
   const isSignedIn = Boolean(authUser && !authUser.isAnonymous);
   const premiumStatus = purchaseSnapshot.premiumStatus;
   const purchaseState = purchaseSnapshot.purchaseState;
@@ -2825,10 +2843,11 @@ export default function App() {
       : 'Sign in first to enable recovery.'
     : 'Needs Premium and sign-in.';
   const settingsSections: Array<{ id: SettingsSection; label: string }> = [
+    { id: 'overview', label: 'Overview' },
     { id: 'appearance', label: 'Look' },
     { id: 'locale', label: 'Locale' },
     { id: 'accounts', label: 'Accounts' },
-    { id: 'cloud', label: 'Account' },
+    { id: 'cloud', label: 'Recovery' },
     { id: 'data', label: 'Data' },
   ];
 
@@ -2855,6 +2874,10 @@ export default function App() {
     }
 
     setActiveSettingsSection(section);
+  };
+  const openMoreSection = (section: SettingsSection = 'overview') => {
+    activateSettingsSection(section);
+    navigateToScreen('settings');
   };
   const animateUi = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -3022,6 +3045,7 @@ export default function App() {
     setExpenseAccountId(bankAccounts[0]?.id ?? '');
     setExpenseDate(getDefaultExpenseDate(activeMonth?.id ?? getMonthId(new Date())));
     setExpenseRecurring(false);
+    setShowExpenseDetails(false);
     setExpenseAiSuggestion(null);
     setExpenseAiError('');
     setExpenseAiBusy(false);
@@ -3047,6 +3071,7 @@ export default function App() {
       setExpenseCategoryId(categoryId);
       setExpenseRecurring(category?.recurring ?? false);
       setExpenseSubcategory(resolveExpenseSubcategory(category, subcategory, { preferSingle: true }));
+      setShowExpenseDetails(Boolean(subcategory));
     }
 
     setIsExpenseSheetOpen(true);
@@ -3076,6 +3101,9 @@ export default function App() {
     setExpenseAccountId(transaction.accountId ?? bankAccounts[0]?.id ?? '');
     setExpenseRecurring(transaction.recurring);
     setExpenseDate(getDefaultExpenseDate(activeMonth.id));
+    setShowExpenseDetails(
+      Boolean(transaction.subcategory || transaction.accountId || transaction.recurring),
+    );
     setExpenseAiSuggestion(null);
     setExpenseAiError('');
   };
@@ -4255,6 +4283,7 @@ export default function App() {
     setExpenseAccountId(transaction.accountId ?? '');
     setExpenseDate(clampDateToMonth(new Date(transaction.happenedAt), activeMonth.id));
     setExpenseRecurring(transaction.recurring);
+    setShowExpenseDetails(true);
     setShowExpenseDatePicker(false);
     setIsExpenseSheetOpen(true);
     navigateToScreen('spend');
@@ -4823,10 +4852,28 @@ export default function App() {
       );
     }
 
+    const showRecentExpenseTemplates =
+      !editingTransactionId &&
+      !expenseAmount.trim() &&
+      !expenseNote.trim() &&
+      recentExpenseTemplates.length > 0;
+
     return (
       <>
-        <View style={styles.filterGroup}>
-          <Text style={styles.filterGroupLabel}>Quick amounts</Text>
+        <View style={styles.expenseFormStack}>
+          <View style={[styles.fieldCard, styles.fieldWide]}>
+            <Text style={styles.fieldLabel}>Amount</Text>
+            <TextInput
+              style={styles.expenseAmountInput}
+              value={expenseAmount}
+              onChangeText={setExpenseAmount}
+              keyboardType="numeric"
+              placeholder="42"
+              placeholderTextColor={currentTheme.placeholder}
+              selectionColor={currentTheme.accent}
+            />
+          </View>
+
           <View style={styles.filterRowCompact}>
             {[5, 10, 20, 50, 100].map((amount) => {
               const selected = expenseAmount === String(amount);
@@ -4844,13 +4891,10 @@ export default function App() {
               );
             })}
           </View>
-        </View>
 
-        {recentExpenseTemplates.length > 0 ? (
-          <View style={styles.filterGroup}>
-            <Text style={styles.filterGroupLabel}>Repeat recent</Text>
-            <View style={styles.filterRowCompact}>
-              {recentExpenseTemplates.map((transaction) => {
+          {showRecentExpenseTemplates ? (
+            <View style={styles.expenseInlineRow}>
+              {recentExpenseTemplates.slice(0, 3).map((transaction) => {
                 const category =
                   activeMonth.categories.find((item) => item.id === transaction.categoryId) ?? null;
                 const label = getTransactionDisplayTitle(transaction, category?.name);
@@ -4858,32 +4902,17 @@ export default function App() {
                 return (
                   <Pressable
                     key={transaction.id}
-                    style={styles.ghostButton}
+                    style={styles.secondaryButton}
                     onPress={() => applyExpenseTemplate(transaction)}
                   >
-                    <Text style={styles.ghostButtonText}>
+                    <Text style={styles.secondaryButtonText}>
                       {label} · {formatCurrency(transaction.amount)}
                     </Text>
                   </Pressable>
                 );
               })}
             </View>
-          </View>
-        ) : null}
-
-        <View style={styles.formShell}>
-          <View style={styles.fieldCard}>
-            <Text style={styles.fieldLabel}>Amount</Text>
-            <TextInput
-              style={styles.fieldInput}
-              value={expenseAmount}
-              onChangeText={setExpenseAmount}
-              keyboardType="numeric"
-              placeholder="42"
-              placeholderTextColor={currentTheme.placeholder}
-              selectionColor={currentTheme.accent}
-            />
-          </View>
+          ) : null}
 
           <View style={[styles.fieldCard, styles.fieldWide]}>
             <Text style={styles.fieldLabel}>Note</Text>
@@ -4891,178 +4920,19 @@ export default function App() {
               style={styles.fieldInput}
               value={expenseNote}
               onChangeText={setExpenseNote}
-              placeholder="Lunch, fuel, pharmacy..."
+              placeholder="Lunch, rent, fuel..."
               placeholderTextColor={currentTheme.placeholder}
               selectionColor={currentTheme.accent}
             />
           </View>
         </View>
 
-        <View style={styles.sectionActionRow}>
-          <Pressable
-            style={[
-              styles.tertiaryButton,
-              (hasPremiumAccess &&
-                (expenseAiBusy ||
-                  !expenseAiAssistPayload.note ||
-                  expenseAiAssistPayload.amount <= 0)) &&
-                styles.buttonDisabled,
-            ]}
-            onPress={generateAiExpenseAssist}
-            disabled={
-              hasPremiumAccess &&
-              (expenseAiBusy || !expenseAiAssistPayload.note || expenseAiAssistPayload.amount <= 0)
-            }
-          >
-            <Text style={styles.tertiaryButtonText}>
-              {!hasPremiumAccess
-                ? 'Unlock AI suggestion'
-                : expenseAiBusy
-                  ? 'Checking...'
-                  : 'AI assist'}
-            </Text>
-          </Pressable>
-
-          {hasPremiumAccess && expenseAiSuggestion ? (
-            <Pressable style={styles.secondaryButton} onPress={applyExpenseAiSuggestion}>
-              <Text style={styles.secondaryButtonText}>Use AI match</Text>
-            </Pressable>
+        <View style={styles.expenseSectionHeader}>
+          <Text style={styles.fieldLabel}>Category</Text>
+          {recentExpenseCategories.length > 0 ? (
+            <Text style={styles.expenseSectionMeta}>Recent first</Text>
           ) : null}
         </View>
-
-        {!hasPremiumAccess ? (
-          <Text style={styles.selectorHint}>
-            Premium can read the note and suggest the category, account, and repeat flag.
-          </Text>
-        ) : null}
-
-        {hasPremiumAccess && expenseAiSuggestion ? (
-          <View style={styles.suggestionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionHeaderCopy}>
-                <Text style={styles.reviewTitle}>Suggested match</Text>
-                <Text style={styles.suggestionText}>{expenseAiSuggestion.reason}</Text>
-              </View>
-
-              <View style={styles.deltaChip}>
-                <Text style={styles.deltaChipText}>{expenseAiSuggestion.model}</Text>
-              </View>
-            </View>
-
-            <View style={styles.compactHighlightRow}>
-              {expenseAiSuggestedCategory ? (
-                <View style={styles.compactHighlightChip}>
-                  <Text style={styles.compactHighlightText}>{expenseAiSuggestedCategory.name}</Text>
-                </View>
-              ) : null}
-              {expenseAiSuggestedAccount ? (
-                <View style={styles.compactHighlightChip}>
-                  <Text style={styles.compactHighlightText}>{expenseAiSuggestedAccount.name}</Text>
-                </View>
-              ) : null}
-              <View style={styles.compactHighlightChip}>
-                <Text style={styles.compactHighlightText}>
-                  {expenseAiSuggestion.recurring ? 'Repeats likely' : 'One-off likely'}
-                </Text>
-              </View>
-              {expenseAiSuggestion.subcategoryHint ? (
-                <View style={styles.compactHighlightChip}>
-                  <Text style={styles.compactHighlightText}>
-                    Hint: {expenseAiSuggestion.subcategoryHint}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-          </View>
-        ) : null}
-
-        {hasPremiumAccess && expenseAiError ? <Text style={styles.aiReviewErrorText}>{expenseAiError}</Text> : null}
-
-        <View style={styles.formShell}>
-          <Pressable
-            style={[styles.fieldCard, styles.fieldWide, styles.dateFieldCard]}
-            onPress={openExpenseDatePicker}
-          >
-            <Text style={styles.fieldLabel}>Date</Text>
-            <Text style={styles.fieldValue}>{formatExpenseDate(expenseDate, localeTag)}</Text>
-            <Text style={styles.fieldHint}>Inside {getMonthLabel(activeMonth.id, localeTag)}</Text>
-          </Pressable>
-        </View>
-
-        {showExpenseDatePicker && Platform.OS === 'ios' ? (
-          <View style={styles.datePickerCard}>
-            <DateTimePicker
-              value={expenseDate}
-              mode="date"
-              display="spinner"
-              minimumDate={expenseDateBounds.start}
-              maximumDate={expenseDateBounds.end}
-              themeVariant="light"
-              textColor={currentTheme.text}
-              onChange={handleExpenseDateChange}
-            />
-          </View>
-        ) : null}
-
-        <Text style={styles.fieldLabel}>Paid from</Text>
-        {bankAccounts.length > 0 ? (
-          <View style={styles.chipWrap}>
-            {bankAccounts.map((account) => {
-              const selected = account.id === expenseAccountId;
-
-              return (
-                <Pressable
-                  key={account.id}
-                  style={[styles.filterChip, selected && styles.filterChipActive]}
-                  onPress={() => setExpenseAccountId(account.id)}
-                >
-                  <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
-                    {account.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : (
-          <View style={styles.emptyStateCompact}>
-            <Text style={styles.selectorHint}>
-              Add a bank account in Settings if you want expenses tagged by where they were paid from.
-            </Text>
-            <Pressable
-              style={styles.secondaryButton}
-              onPress={() => {
-                resetTransactionForm();
-                openAccountSheet();
-              }}
-            >
-              <Text style={styles.secondaryButtonText}>Add bank account</Text>
-            </Pressable>
-          </View>
-        )}
-
-        <Text style={styles.fieldLabel}>Category</Text>
-        {recentExpenseCategories.length > 0 ? (
-          <View style={styles.filterGroup}>
-            <Text style={styles.filterGroupLabel}>Recent lanes</Text>
-            <View style={styles.filterRowCompact}>
-              {recentExpenseCategories.map((category) => {
-                const selected = category.id === expenseCategoryId;
-
-                return (
-                  <Pressable
-                    key={category.id}
-                    style={[styles.filterChip, selected && styles.filterChipActive]}
-                    onPress={() => selectExpenseCategory(category.id)}
-                  >
-                    <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
-                      {category.name}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        ) : null}
         <View style={styles.chipWrap}>
           {activeMonth.categories.map((category) => {
             const theme = categoryThemes[category.themeId];
@@ -5091,49 +4961,6 @@ export default function App() {
           })}
         </View>
 
-        {selectedExpenseSubcategories.length > 0 ? (
-          <>
-            <Text style={styles.fieldLabel}>Subcategory</Text>
-            <View style={styles.chipWrap}>
-              <Pressable
-                style={[styles.filterChip, !expenseSubcategory && styles.filterChipActive]}
-                onPress={() => setExpenseSubcategory('')}
-              >
-                <Text
-                  style={[styles.filterChipText, !expenseSubcategory && styles.filterChipTextActive]}
-                >
-                  No subcategory
-                </Text>
-              </Pressable>
-              {selectedExpenseSubcategories.map((subcategory) => {
-                const selected = expenseSubcategory === subcategory;
-
-                return (
-                  <Pressable
-                    key={subcategory}
-                    style={[styles.filterChip, selected && styles.filterChipActive]}
-                    onPress={() => setExpenseSubcategory(subcategory)}
-                  >
-                    <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
-                      {subcategory}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </>
-        ) : null}
-
-        <View style={styles.switchRow}>
-          <Text style={styles.switchLabel}>Repeat this expense next month</Text>
-          <Switch
-            value={expenseRecurring}
-            onValueChange={setExpenseRecurring}
-            trackColor={{ false: currentTheme.switchOff, true: currentTheme.switchOn }}
-            thumbColor={expenseRecurring ? currentTheme.switchThumbOn : currentTheme.switchThumbOff}
-          />
-        </View>
-
         <View style={styles.actionRow}>
           <Pressable style={styles.primaryButton} onPress={submitTransaction}>
             <Text style={styles.primaryButtonText}>
@@ -5141,12 +4968,184 @@ export default function App() {
             </Text>
           </Pressable>
 
-          <Pressable style={styles.ghostButton} onPress={resetTransactionForm}>
+          <Pressable
+            style={styles.ghostButton}
+            onPress={() => {
+              animateUi();
+              setShowExpenseDetails((current) => !current);
+            }}
+          >
             <Text style={styles.ghostButtonText}>
-              {editingTransactionId ? 'Cancel edit' : 'Close'}
+              {showExpenseDetails ? 'Hide details' : 'Add details'}
             </Text>
           </Pressable>
+
+          {editingTransactionId ? (
+            <Pressable style={styles.ghostButton} onPress={resetTransactionForm}>
+              <Text style={styles.ghostButtonText}>Cancel</Text>
+            </Pressable>
+          ) : null}
         </View>
+
+        {showExpenseDetails ? (
+          <View style={styles.expenseDetailsPanel}>
+            <Pressable
+              style={[styles.fieldCard, styles.fieldWide, styles.dateFieldCard]}
+              onPress={openExpenseDatePicker}
+            >
+              <Text style={styles.fieldLabel}>Date</Text>
+              <Text style={styles.fieldValue}>{formatExpenseDate(expenseDate, localeTag)}</Text>
+              <Text style={styles.fieldHint}>Inside {getMonthLabel(activeMonth.id, localeTag)}</Text>
+            </Pressable>
+
+            {showExpenseDatePicker && Platform.OS === 'ios' ? (
+              <View style={styles.datePickerCard}>
+                <DateTimePicker
+                  value={expenseDate}
+                  mode="date"
+                  display="spinner"
+                  minimumDate={expenseDateBounds.start}
+                  maximumDate={expenseDateBounds.end}
+                  themeVariant="light"
+                  textColor={currentTheme.text}
+                  onChange={handleExpenseDateChange}
+                />
+              </View>
+            ) : null}
+
+            {bankAccounts.length > 0 ? (
+              <>
+                <Text style={styles.fieldLabel}>Paid from</Text>
+                <View style={styles.chipWrap}>
+                  {bankAccounts.map((account) => {
+                    const selected = account.id === expenseAccountId;
+
+                    return (
+                      <Pressable
+                        key={account.id}
+                        style={[styles.filterChip, selected && styles.filterChipActive]}
+                        onPress={() => setExpenseAccountId(account.id)}
+                      >
+                        <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
+                          {account.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            ) : null}
+
+            {selectedExpenseSubcategories.length > 0 ? (
+              <>
+                <Text style={styles.fieldLabel}>Subcategory</Text>
+                <View style={styles.chipWrap}>
+                  <Pressable
+                    style={[styles.filterChip, !expenseSubcategory && styles.filterChipActive]}
+                    onPress={() => setExpenseSubcategory('')}
+                  >
+                    <Text
+                      style={[styles.filterChipText, !expenseSubcategory && styles.filterChipTextActive]}
+                    >
+                      None
+                    </Text>
+                  </Pressable>
+                  {selectedExpenseSubcategories.map((subcategory) => {
+                    const selected = expenseSubcategory === subcategory;
+
+                    return (
+                      <Pressable
+                        key={subcategory}
+                        style={[styles.filterChip, selected && styles.filterChipActive]}
+                        onPress={() => setExpenseSubcategory(subcategory)}
+                      >
+                        <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
+                          {subcategory}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            ) : null}
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchLabel}>Repeat next month</Text>
+              <Switch
+                value={expenseRecurring}
+                onValueChange={setExpenseRecurring}
+                trackColor={{ false: currentTheme.switchOff, true: currentTheme.switchOn }}
+                thumbColor={expenseRecurring ? currentTheme.switchThumbOn : currentTheme.switchThumbOff}
+              />
+            </View>
+
+            <View style={styles.sectionActionRow}>
+              <Pressable
+                style={[
+                  styles.tertiaryButton,
+                  (hasPremiumAccess &&
+                    (expenseAiBusy ||
+                      !expenseAiAssistPayload.note ||
+                      expenseAiAssistPayload.amount <= 0)) &&
+                    styles.buttonDisabled,
+                ]}
+                onPress={generateAiExpenseAssist}
+                disabled={
+                  hasPremiumAccess &&
+                  (expenseAiBusy || !expenseAiAssistPayload.note || expenseAiAssistPayload.amount <= 0)
+                }
+              >
+                <Text style={styles.tertiaryButtonText}>
+                  {!hasPremiumAccess
+                    ? 'Unlock smart match'
+                    : expenseAiBusy
+                      ? 'Checking...'
+                      : 'Smart match'}
+                </Text>
+              </Pressable>
+
+              {hasPremiumAccess && expenseAiSuggestion ? (
+                <Pressable style={styles.secondaryButton} onPress={applyExpenseAiSuggestion}>
+                  <Text style={styles.secondaryButtonText}>Use match</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            {hasPremiumAccess && expenseAiSuggestion ? (
+              <View style={styles.suggestionCard}>
+                <View style={styles.compactHighlightRow}>
+                  {expenseAiSuggestedCategory ? (
+                    <View style={styles.compactHighlightChip}>
+                      <Text style={styles.compactHighlightText}>{expenseAiSuggestedCategory.name}</Text>
+                    </View>
+                  ) : null}
+                  {expenseAiSuggestedAccount ? (
+                    <View style={styles.compactHighlightChip}>
+                      <Text style={styles.compactHighlightText}>{expenseAiSuggestedAccount.name}</Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.compactHighlightChip}>
+                    <Text style={styles.compactHighlightText}>
+                      {expenseAiSuggestion.recurring ? 'Repeat likely' : 'One-off likely'}
+                    </Text>
+                  </View>
+                  {expenseAiSuggestion.subcategoryHint ? (
+                    <View style={styles.compactHighlightChip}>
+                      <Text style={styles.compactHighlightText}>
+                        {expenseAiSuggestion.subcategoryHint}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={styles.suggestionText}>{expenseAiSuggestion.reason}</Text>
+              </View>
+            ) : null}
+
+            {hasPremiumAccess && expenseAiError ? (
+              <Text style={styles.aiReviewErrorText}>{expenseAiError}</Text>
+            ) : null}
+          </View>
+        ) : null}
       </>
     );
   };
@@ -5412,8 +5411,8 @@ export default function App() {
       <View style={styles.card}>
         <View style={styles.sectionHeader}>
           <View style={styles.sectionHeaderCopy}>
-            <Text style={styles.sectionTitle}>Preferences</Text>
-            <Text style={styles.sectionSubtitle}>Look, locale, accounts, backup, and data.</Text>
+            <Text style={styles.sectionTitle}>More</Text>
+            <Text style={styles.sectionSubtitle}>Editing, bigger picture, recovery, and extras.</Text>
           </View>
 
           {!hasPremiumAccess ? (
@@ -5428,10 +5427,36 @@ export default function App() {
             <Text style={styles.compactHighlightText}>{premiumStatusLabel}</Text>
           </View>
           <View style={styles.compactHighlightChip}>
-            <Text style={styles.compactHighlightText}>
-              {hasPremiumAccess ? 'Premium access' : 'Core budgeting free'}
-            </Text>
+            <Text style={styles.compactHighlightText}>{backupStateValue}</Text>
           </View>
+        </View>
+
+        <View style={styles.moreShortcutGrid}>
+          <Pressable style={styles.moreShortcutCard} onPress={openPlanCategories}>
+            <Text style={styles.moreShortcutTitle}>Edit budget</Text>
+            <Text style={styles.moreShortcutMeta}>Categories, amount, and goals.</Text>
+          </Pressable>
+
+          <Pressable style={styles.moreShortcutCard} onPress={() => navigateToScreen('insights')}>
+            <Text style={styles.moreShortcutTitle}>Bigger picture</Text>
+            <Text style={styles.moreShortcutMeta}>Patterns, pace, and next moves.</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.moreShortcutCard}
+            onPress={() => activateSettingsSection('cloud')}
+          >
+            <Text style={styles.moreShortcutTitle}>Recovery</Text>
+            <Text style={styles.moreShortcutMeta}>{backupStateMeta}</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.moreShortcutCard}
+            onPress={() => activateSettingsSection('data')}
+          >
+            <Text style={styles.moreShortcutTitle}>Data tools</Text>
+            <Text style={styles.moreShortcutMeta}>Import, export, and tidy-up.</Text>
+          </Pressable>
         </View>
 
         <View style={styles.settingsSectionRow}>
@@ -5464,7 +5489,7 @@ export default function App() {
       {activeSettingsSection === 'appearance' ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Theme</Text>
-          <Text style={styles.sectionSubtitle}>Subtle, low-noise themes.</Text>
+          <Text style={styles.sectionSubtitle}>Calm looks for the app.</Text>
 
           <Pressable
             style={[
@@ -5499,7 +5524,7 @@ export default function App() {
       {activeSettingsSection === 'locale' ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Currency and language</Text>
-          <Text style={styles.sectionSubtitle}>Defaults for budgets, exports, and dates.</Text>
+          <Text style={styles.sectionSubtitle}>Defaults for budgets and dates.</Text>
 
           <Pressable
             style={styles.selectorDropdownTrigger}
@@ -5545,7 +5570,7 @@ export default function App() {
           <View style={styles.sectionHeader}>
             <View style={styles.sectionHeaderCopy}>
               <Text style={styles.sectionTitle}>Bank accounts</Text>
-              <Text style={styles.sectionSubtitle}>Optional accounts for tagging spend.</Text>
+              <Text style={styles.sectionSubtitle}>Optional tags for where money moved from.</Text>
             </View>
 
             <Pressable style={styles.tertiaryButton} onPress={() => openAccountSheet()}>
@@ -5648,8 +5673,8 @@ export default function App() {
 
       {activeSettingsSection === 'cloud' ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Account and recovery</Text>
-          <Text style={styles.sectionSubtitle}>Stay local by default. Turn on backup only when you want a way back after reinstall.</Text>
+          <Text style={styles.sectionTitle}>Recovery</Text>
+          <Text style={styles.sectionSubtitle}>Stay local by default. Turn recovery on only when you want a way back after reinstall.</Text>
 
           <View style={styles.accountStatusGrid}>
             <View style={styles.accountStatusTile}>
@@ -5988,8 +6013,8 @@ export default function App() {
 
       {activeSettingsSection === 'data' ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Import and export</Text>
-          <Text style={styles.sectionSubtitle}>Share, restore, or move data between tools.</Text>
+          <Text style={styles.sectionTitle}>Data tools</Text>
+          <Text style={styles.sectionSubtitle}>Import, export, and clean up what came in.</Text>
 
           <View style={styles.transferGrid}>
             {exportActions.map((action) => (
@@ -6203,114 +6228,75 @@ export default function App() {
                       <Text style={styles.heroSubtitle}>{budgetHeroSupportLabel}</Text>
                     </View>
 
-                    <View style={styles.compactHighlightRow}>
-                      <View style={styles.compactHighlightChip}>
-                        <Text style={styles.compactHighlightText}>
-                          {budgetFocusSummary
-                            ? `Focus ${budgetFocusSummary.category.name}`
-                            : 'Fresh month'}
+                    <View style={styles.heroSignalRow}>
+                      <View style={styles.heroSignalPill}>
+                        <Text style={styles.heroSignalText}>
+                          {overCount > 0 && budgetFocusSummary
+                            ? `Watch ${budgetFocusSummary.category.name}`
+                            : `${onTrackCount}/${categorySummaries.length || 0} on track`}
                         </Text>
                       </View>
-                      <View style={styles.compactHighlightChip}>
-                        <Text style={styles.compactHighlightText}>
+                      <View style={styles.heroSignalPill}>
+                        <Text style={styles.heroSignalText}>
                           {weeklySpendTotal > 0
                             ? `${formatCurrency(weeklySpendTotal)} this week`
-                            : 'No spend this week yet'}
+                            : forecastChipLabel}
                         </Text>
                       </View>
                     </View>
                   </View>
 
-                  <View style={styles.heroSpotlightSection}>
-                    <View style={styles.heroOrbit}>
-                      <View style={styles.heroOrbitTrack} />
+                  <View style={styles.heroAmountPanel}>
+                    <Text style={styles.heroAmountLabel}>{budgetSpotlightLabel}</Text>
+                    <Text
+                      style={[
+                        styles.heroAmountValue,
+                        remaining < 0 && styles.heroAmountValueAlert,
+                      ]}
+                    >
+                      {budgetSpotlightValue}
+                    </Text>
+                    <Text style={styles.heroAmountMeta}>{budgetHeroMessage}</Text>
+                  </View>
+
+                  <View style={styles.heroBandPanel}>
+                    <View style={styles.heroBandHeader}>
+                      <View style={styles.heroBandCopy}>
+                        <Text style={styles.heroBandTitle}>Month progress</Text>
+                        <Text style={styles.heroBandMeta}>
+                          {formatCurrency(totalSpent)} spent of {formatCurrency(totalPlanned)}
+                        </Text>
+                      </View>
+                      <Text style={styles.heroBandPercent}>{Math.round(clamp(monthlyProgress) * 100)}%</Text>
+                    </View>
+
+                    <View style={styles.heroBandTrack}>
                       <View
                         style={[
-                          styles.heroOrbitMarkerWrap,
-                          { transform: [{ rotate: budgetOrbitRotation }] },
+                          styles.heroBandFill,
+                          monthlyProgress >= 1
+                            ? styles.heroBandFillAlert
+                            : monthlyProgress >= 0.82
+                              ? styles.heroBandFillWarning
+                              : styles.heroBandFillGood,
+                          { width: `${Math.round(clamp(monthlyProgress) * 100)}%` },
                         ]}
-                      >
-                        <View
-                          style={[
-                            styles.heroOrbitMarker,
-                            remaining < 0 ? styles.heroOrbitMarkerAlert : styles.heroOrbitMarkerGood,
-                          ]}
-                        />
+                      />
+                    </View>
+
+                    <View style={styles.heroMiniStatRow}>
+                      <View style={styles.heroMiniStat}>
+                        <Text style={styles.heroMiniStatValue}>{formatCurrency(totalSpent)}</Text>
+                        <Text style={styles.heroMiniStatLabel}>Spent</Text>
                       </View>
-                      <View style={styles.heroOrbitCore}>
-                        <Text style={styles.heroOrbitEyebrow}>{budgetSpotlightLabel}</Text>
-                        <Text
-                          style={[
-                            styles.heroOrbitValue,
-                            remaining < 0 && styles.heroOrbitValueAlert,
-                          ]}
-                        >
-                          {budgetSpotlightValue}
-                        </Text>
-                        <Text style={styles.heroOrbitMeta}>{budgetHeroMessage}</Text>
+                      <View style={styles.heroMiniStat}>
+                        <Text style={styles.heroMiniStatValue}>{formatCurrency(fixedLeftTotal)}</Text>
+                        <Text style={styles.heroMiniStatLabel}>Fixed left</Text>
                       </View>
-                    </View>
-
-                    <View style={styles.heroProgressShell}>
-                      <View style={styles.progressTrack}>
-                        <View
-                          style={[
-                            styles.progressFill,
-                            monthlyProgress >= 1
-                              ? styles.progressFillAlert
-                              : monthlyProgress >= 0.82
-                                ? styles.progressFillWarning
-                                : styles.progressFillGood,
-                            { width: `${Math.round(clamp(monthlyProgress) * 100)}%` },
-                          ]}
-                        />
+                      <View style={styles.heroMiniStat}>
+                        <Text style={styles.heroMiniStatValue}>{formatCurrency(flexibleLeftTotal)}</Text>
+                        <Text style={styles.heroMiniStatLabel}>Free to move</Text>
                       </View>
-
-                      <View style={styles.heroLegendRow}>
-                        <View style={styles.heroLegendChip}>
-                          <Text style={styles.heroLegendValue}>{formatCurrency(totalSpent)}</Text>
-                          <Text style={styles.heroLegendLabel}>spent</Text>
-                        </View>
-                        <View style={styles.heroLegendChip}>
-                          <Text style={styles.heroLegendValue}>{formatCurrency(totalPlanned)}</Text>
-                          <Text style={styles.heroLegendLabel}>planned</Text>
-                        </View>
-                        <View style={styles.heroLegendChip}>
-                          <Text style={styles.heroLegendValue}>{Math.round(clamp(monthlyProgress) * 100)}%</Text>
-                          <Text style={styles.heroLegendLabel}>used</Text>
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.heroStatGrid}>
-                    <View style={styles.heroStatCard}>
-                      <Text style={styles.heroStatLabel}>Left</Text>
-                      <Text
-                        style={[
-                          styles.heroStatValue,
-                          remaining < 0 && styles.heroStatValueAlert,
-                        ]}
-                      >
-                        {formatCurrency(remaining)}
-                      </Text>
-                    </View>
-
-                    <View style={styles.heroStatCard}>
-                      <Text style={styles.heroStatLabel}>Spent</Text>
-                      <Text style={styles.heroStatValue}>{formatCurrency(totalSpent)}</Text>
-                    </View>
-
-                    <View style={styles.heroStatCard}>
-                      <Text style={styles.heroStatLabel}>This week</Text>
-                      <Text style={styles.heroStatValue}>{formatCurrency(weeklySpendTotal)}</Text>
-                    </View>
-
-                    <View style={styles.heroStatCard}>
-                      <Text style={styles.heroStatLabel}>Healthy</Text>
-                      <Text style={styles.heroStatValue}>
-                        {categorySummaries.length > 0 ? `${onTrackCount}/${categorySummaries.length}` : '0'}
-                      </Text>
                     </View>
                   </View>
 
@@ -6321,23 +6307,12 @@ export default function App() {
                     >
                       <Text style={styles.primaryButtonText}>Add expense</Text>
                     </Pressable>
-                    <View style={styles.heroSecondaryRow}>
-                      <Pressable style={styles.ghostButton} onPress={() => navigateToScreen('spend')}>
-                        <Text style={styles.ghostButtonText}>Activity</Text>
-                      </Pressable>
-                      <Pressable style={styles.ghostButton} onPress={openPlanCategories}>
-                        <Text style={styles.ghostButtonText}>Plan</Text>
-                      </Pressable>
-                      <Pressable style={styles.ghostButton} onPress={() => navigateToScreen('insights')}>
-                        <Text style={styles.ghostButtonText}>Insights</Text>
-                      </Pressable>
-                    </View>
                   </View>
 
                   {primaryAlert ? (
-                    <View style={styles.heroNoteCard}>
-                      <Text style={styles.heroNoteTitle}>{primaryAlert.title}</Text>
-                      <Text style={styles.heroNoteBody}>{primaryAlert.body}</Text>
+                    <View style={styles.heroInlineNote}>
+                      <Text style={styles.heroInlineNoteTitle}>{primaryAlert.title}</Text>
+                      <Text style={styles.heroInlineNoteBody}>{primaryAlert.body}</Text>
                     </View>
                   ) : null}
                 </>
@@ -6415,17 +6390,8 @@ export default function App() {
               <View style={styles.homeSection}>
                 <View style={styles.sectionHeader}>
                   <View style={styles.sectionHeaderCopy}>
-                    <Text style={styles.sectionTitle}>Live categories</Text>
-                    <Text style={styles.sectionSubtitle}>Tap a lane to open quick actions, then keep the rest tucked away.</Text>
-                  </View>
-
-                  <View style={styles.headerActionStack}>
-                    <Pressable style={styles.tertiaryButton} onPress={() => navigateToScreen('insights')}>
-                      <Text style={styles.tertiaryButtonText}>Insights</Text>
-                    </Pressable>
-                    <Pressable style={styles.tertiaryButton} onPress={openPlanCategories}>
-                      <Text style={styles.tertiaryButtonText}>Edit plan</Text>
-                    </Pressable>
+                    <Text style={styles.sectionTitle}>Budget lanes</Text>
+                    <Text style={styles.sectionSubtitle}>Attention first. Healthy lanes stay tucked away.</Text>
                   </View>
                 </View>
 
@@ -6442,8 +6408,8 @@ export default function App() {
                         {showAllBudgetCategories
                           ? 'Hide extras'
                           : priorityBudgetCategorySummaries.length > 0
-                            ? `Show ${hiddenHealthyBudgetCategoryCount} healthy`
-                            : `Show ${hiddenHealthyBudgetCategoryCount} more categories`}
+                            ? `Show healthy (${hiddenHealthyBudgetCategoryCount})`
+                            : `Show all (${hiddenHealthyBudgetCategoryCount})`}
                       </Text>
                     </Pressable>
                   </View>
@@ -6490,8 +6456,6 @@ export default function App() {
                     return (
                       <View style={styles.budgetRowStack}>
                         <BudgetCategoryRow
-                          swipeViewportWidth={swipeViewportWidth}
-                          swipeRailWidth={swipeRailWidth}
                           icon={getCategoryIcon(summary.category.name)}
                           name={summary.category.name}
                           spentText={`${formatCurrency(summary.spent)} of ${formatCurrency(summary.category.planned)}`}
@@ -6531,7 +6495,6 @@ export default function App() {
                           }}
                           onOpen={() => toggleBudgetCategoryPeek(summary.category.id)}
                           onAdd={() => openExpenseCapture(summary.category.id, null)}
-                          onEdit={() => editCategory(summary.category)}
                         />
 
                         {isExpanded ? (
@@ -6594,6 +6557,12 @@ export default function App() {
                               </Pressable>
                               <Pressable
                                 style={styles.ghostButton}
+                                onPress={() => editCategory(summary.category)}
+                              >
+                                <Text style={styles.ghostButtonText}>Edit</Text>
+                              </Pressable>
+                              <Pressable
+                                style={styles.ghostButton}
                                 onPress={() => openCategoryDetail(summary.category.id)}
                               >
                                 <Text style={styles.ghostButtonText}>Details</Text>
@@ -6617,8 +6586,18 @@ export default function App() {
           </>
         ) : (
           <View style={styles.screenHeader}>
-            <Text style={styles.screenHeaderTitle}>{screenMeta[activeScreen].title}</Text>
-            <Text style={styles.screenHeaderSubtitle}>{screenMeta[activeScreen].subtitle}</Text>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionHeaderCopy}>
+                <Text style={styles.screenHeaderTitle}>{screenMeta[activeScreen].title}</Text>
+                <Text style={styles.screenHeaderSubtitle}>{screenMeta[activeScreen].subtitle}</Text>
+              </View>
+
+              {activeScreen === 'plan' || activeScreen === 'insights' ? (
+                <Pressable style={styles.tertiaryButton} onPress={() => openMoreSection('overview')}>
+                  <Text style={styles.tertiaryButtonText}>Back to more</Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
         )}
 
@@ -9318,11 +9297,11 @@ export default function App() {
             key={screenId}
             style={[
               styles.bottomNavItem,
-              activeScreen === screenId && styles.bottomNavItemActive,
+              activeNavScreen === screenId && styles.bottomNavItemActive,
             ]}
             onPress={() => {
-              if (screenId === 'plan') {
-                openPlanCategories();
+              if (screenId === 'settings') {
+                openMoreSection('overview');
                 return;
               }
 
@@ -9332,13 +9311,13 @@ export default function App() {
             <View
               style={[
                 styles.bottomNavMarker,
-                activeScreen === screenId && styles.bottomNavMarkerActive,
+                activeNavScreen === screenId && styles.bottomNavMarkerActive,
               ]}
             />
             <Text
               style={[
                 styles.bottomNavText,
-                activeScreen === screenId && styles.bottomNavTextActive,
+                activeNavScreen === screenId && styles.bottomNavTextActive,
               ]}
             >
               {screenMeta[screenId].label}
@@ -9423,22 +9402,22 @@ const createStyles = (
       maxWidth: 280,
     },
     heroCard: {
-      backgroundColor: theme.hero,
-      borderRadius: 26,
-      padding: isCompact ? 14 : 18,
+      backgroundColor: theme.surface,
+      borderRadius: 28,
+      padding: isCompact ? 16 : 20,
       marginBottom: 10,
       borderWidth: 1,
       borderColor: theme.divider,
       shadowColor: theme.heroShadow,
-      shadowOpacity: 0.04,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.03,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 5 },
       elevation: 2,
       overflow: 'hidden',
     },
     budgetStage: {
-      justifyContent: 'space-between',
-      gap: 14,
+      justifyContent: 'flex-start',
+      gap: 12,
     },
     budgetStageLead: {
       gap: 10,
@@ -9486,18 +9465,169 @@ const createStyles = (
       color: theme.heroStatusAlertText,
     },
     heroTitle: {
-      fontSize: isCompact ? 24 : 27,
-      lineHeight: isCompact ? 29 : 32,
+      fontSize: isCompact ? 23 : 26,
+      lineHeight: isCompact ? 28 : 31,
       fontWeight: '800',
       color: theme.text,
-      marginBottom: 6,
+      marginBottom: 4,
     },
     heroSubtitle: {
-      fontSize: 14,
-      lineHeight: 19,
+      fontSize: 13,
+      lineHeight: 18,
       color: theme.textMuted,
-      maxWidth: isCompact ? undefined : 280,
-      marginBottom: 10,
+      maxWidth: isCompact ? undefined : 320,
+    },
+    heroSignalRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    heroSignalPill: {
+      backgroundColor: theme.surfaceTint,
+      borderRadius: 999,
+      paddingHorizontal: 11,
+      paddingVertical: 7,
+      borderWidth: 1,
+      borderColor: theme.divider,
+    },
+    heroSignalText: {
+      color: theme.accentText,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    heroAmountPanel: {
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 24,
+      paddingHorizontal: isCompact ? 16 : 18,
+      paddingVertical: isCompact ? 16 : 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      gap: 6,
+    },
+    heroAmountLabel: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    heroAmountValue: {
+      color: theme.text,
+      fontSize: isCompact ? 42 : 48,
+      lineHeight: isCompact ? 46 : 52,
+      fontWeight: '900',
+      letterSpacing: -1.2,
+    },
+    heroAmountValueAlert: {
+      color: theme.alertText,
+    },
+    heroAmountMeta: {
+      color: theme.textMuted,
+      fontSize: 13,
+      lineHeight: 19,
+      maxWidth: 420,
+    },
+    heroBandPanel: {
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 22,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      gap: 12,
+    },
+    heroBandHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-end',
+      gap: 10,
+    },
+    heroBandCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    heroBandTitle: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '800',
+      marginBottom: 3,
+    },
+    heroBandMeta: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+    },
+    heroBandPercent: {
+      color: theme.text,
+      fontSize: 15,
+      fontWeight: '900',
+    },
+    heroBandTrack: {
+      height: 10,
+      borderRadius: 999,
+      backgroundColor: theme.progressTrack,
+      overflow: 'hidden',
+    },
+    heroBandFill: {
+      height: '100%',
+      borderRadius: 999,
+    },
+    heroBandFillGood: {
+      backgroundColor: theme.progressGood,
+    },
+    heroBandFillWarning: {
+      backgroundColor: theme.progressWarning,
+    },
+    heroBandFillAlert: {
+      backgroundColor: theme.progressAlert,
+    },
+    heroMiniStatRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    heroMiniStat: {
+      flexBasis: isCompact ? '31%' : 0,
+      flexGrow: 1,
+      minWidth: isCompact ? 88 : undefined,
+      backgroundColor: theme.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+      gap: 2,
+    },
+    heroMiniStatValue: {
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '800',
+    },
+    heroMiniStatLabel: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
+    heroInlineNote: {
+      backgroundColor: theme.surfaceTint,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      gap: 3,
+    },
+    heroInlineNoteTitle: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    heroInlineNoteBody: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
     },
     heroSpotlightSection: {
       alignItems: 'center',
@@ -9783,7 +9913,7 @@ const createStyles = (
       elevation: 1,
     },
     homeSection: {
-      gap: 10,
+      gap: 8,
       marginBottom: 10,
     },
     trendCard: {
@@ -9800,9 +9930,9 @@ const createStyles = (
     sectionHeader: {
       flexDirection: isCompact ? 'column' : 'row',
       justifyContent: 'space-between',
-      gap: 10,
+      gap: 8,
       alignItems: isCompact ? 'stretch' : 'flex-start',
-      marginBottom: 10,
+      marginBottom: 8,
     },
     sectionHeaderCopy: {
       flex: 1,
@@ -9963,17 +10093,17 @@ const createStyles = (
       color: theme.alertText,
     },
     sectionTitle: {
-      fontSize: 16,
-      lineHeight: 20,
+      fontSize: 17,
+      lineHeight: 21,
       fontWeight: '800',
       color: theme.text,
     },
     sectionSubtitle: {
       fontSize: 11,
-      lineHeight: 16,
+      lineHeight: 15,
       color: theme.textMuted,
       marginTop: 3,
-      maxWidth: isCompact ? undefined : 280,
+      maxWidth: isCompact ? undefined : 340,
     },
     secondaryButton: {
       backgroundColor: theme.surfaceTint,
@@ -10150,6 +10280,33 @@ const createStyles = (
       fontSize: 11,
       lineHeight: 16,
       marginTop: 6,
+    },
+    moreShortcutGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 10,
+    },
+    moreShortcutCard: {
+      flexBasis: isCompact ? '100%' : '48%',
+      flexGrow: 1,
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      gap: 4,
+    },
+    moreShortcutTitle: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    moreShortcutMeta: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
     },
     settingsSectionRow: {
       flexDirection: 'row',
@@ -10457,8 +10614,8 @@ const createStyles = (
       marginTop: 4,
     },
     heroActionDeck: {
-      gap: 8,
-      marginTop: 2,
+      gap: 10,
+      marginTop: 0,
     },
     heroActionPrimary: {
       alignSelf: 'stretch',
@@ -10470,25 +10627,25 @@ const createStyles = (
     heroSecondaryRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 6,
+      gap: 8,
     },
     primaryButton: {
       backgroundColor: theme.accent,
-      borderRadius: 15,
-      paddingHorizontal: 15,
-      paddingVertical: 10,
+      borderRadius: 18,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
       alignItems: 'center',
     },
     primaryButtonText: {
       color: theme.heroText,
       fontWeight: '800',
-      fontSize: 12,
+      fontSize: 13,
     },
     ghostButton: {
       backgroundColor: theme.surfaceStrong,
-      borderRadius: 15,
+      borderRadius: 16,
       paddingHorizontal: 13,
-      paddingVertical: 8,
+      paddingVertical: 9,
       alignItems: 'center',
     },
     ghostButtonText: {
@@ -11177,28 +11334,28 @@ const createStyles = (
       fontWeight: '700',
     },
     budgetRowStack: {
-      gap: 6,
+      gap: 5,
     },
     budgetPeekCard: {
-      backgroundColor: theme.surface,
+      backgroundColor: theme.surfaceMuted,
       borderRadius: 18,
       borderWidth: 1,
       borderColor: theme.divider,
-      padding: 12,
-      gap: 10,
+      padding: 11,
+      gap: 9,
     },
     budgetPeekStatRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 8,
+      gap: 7,
     },
     budgetPeekStat: {
       flexBasis: isCompact ? '48%' : 0,
       flexGrow: 1,
-      backgroundColor: theme.surfaceMuted,
+      backgroundColor: theme.surface,
       borderRadius: 14,
       paddingHorizontal: 10,
-      paddingVertical: 9,
+      paddingVertical: 8,
     },
     budgetPeekLabel: {
       color: theme.textMuted,
@@ -11214,17 +11371,17 @@ const createStyles = (
     budgetPeekChipWrap: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 8,
+      gap: 7,
     },
     budgetPeekMeta: {
       color: theme.textMuted,
       fontSize: 11,
-      lineHeight: 16,
+      lineHeight: 15,
     },
     budgetPeekActionRow: {
       flexDirection: isCompact ? 'column' : 'row',
       flexWrap: 'wrap',
-      gap: 8,
+      gap: 7,
       alignItems: isCompact ? 'stretch' : 'center',
     },
     swipeRowShell: {

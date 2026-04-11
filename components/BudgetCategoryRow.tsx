@@ -114,9 +114,11 @@ export const BudgetCategoryRow = memo(function BudgetCategoryRow({
 
       <View style={styles.metaRow}>
         <View style={styles.metaLeft}>
-          <Text style={[styles.detail, { color: palette.textMuted }]} numberOfLines={1}>
-            {detailText}
-          </Text>
+          {detailText ? (
+            <Text style={[styles.detail, { color: palette.textMuted }]} numberOfLines={1}>
+              {detailText}
+            </Text>
+          ) : null}
           {compareText ? (
             <Text style={[styles.compare, { color: palette.accentText }]} numberOfLines={1}>
               {compareText}

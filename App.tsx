@@ -49,7 +49,6 @@ import {
   featuredCurrencyCodes,
   featuredLanguageCodes,
   formatTransactionDate,
-  getCategoryGlyph,
   getCategorySummaries,
   getDaysInMonth,
   getLocaleTag,
@@ -65,7 +64,6 @@ import {
   type MonthRecord,
   getTotalPlanned,
   getTotalSpent,
-  parseMonthId,
   LOCAL_STORAGE_KEY,
   LEGACY_STORAGE_KEY,
   normalizeBudgetAppState,
@@ -102,6 +100,42 @@ import {
 import { AppToast } from './components/AppToast';
 import { BudgetCategoryRow } from './components/BudgetCategoryRow';
 import { TransactionListItem } from './components/TransactionListItem';
+import ConfettiCannon from 'react-native-confetti-cannon';
+import { AnimatedBackground } from './src/components/layout/AnimatedBackground';
+import { triggerHaptic } from './src/utils/haptics';
+import {
+  budgetBucketTargetRatio,
+  findMatchingSubcategory,
+  getCategoryIcon,
+  getSuggestedBudgetSetupStep,
+  getTransactionDisplayTitle,
+  resolveExpenseSubcategory,
+} from './src/utils/budgetHelpers';
+import {
+  clampDateToMonth,
+  formatExpenseDate,
+  getDefaultExpenseDate,
+  getEndOfDay,
+  getEndOfWeek,
+  getInsightWeekBucket,
+  getMonthBounds,
+  getStartOfDay,
+  getStartOfWeek,
+} from './src/utils/dateHelpers';
+import {
+  budgetSetupStepMeta,
+  budgetSetupSteps,
+  insightWindowMeta,
+  MAX_RECENT_CATEGORY_SHORTCUTS,
+  MAX_RECENT_EXPENSE_TEMPLATES,
+  MAX_RECENT_SELECTOR_ITEMS,
+  paywallSourceMeta,
+  PREMIUM_PAYWALL_DISMISS_KEY,
+  QUICK_START_PRESET_COUNT,
+  type BudgetSetupStep,
+  type InsightWindow,
+  type PaywallSource,
+} from './src/constants';
 import {
   createBudgetPasswordAccount,
   deleteBudgetUserAccount,
@@ -142,20 +176,10 @@ type ActivityScope = 'today' | 'week' | 'month';
 type AuthMode = 'create' | 'signin';
 type ScreenId = 'home' | 'spend' | 'plan' | 'insights' | 'settings';
 type SettingsSection = 'overview' | 'appearance' | 'locale' | 'accounts' | 'cloud' | 'data';
-type InsightWindow = 'quarter' | 'half' | 'year';
 type InsightSpendMode = 'all' | 'adjustable';
 type AlertTone = 'good' | 'warning' | 'alert';
-type BudgetSetupStep = 'limit' | 'categories' | 'review';
 type CategoryBucketMode = 'auto' | 'manual';
 type LocaleSheetMode = 'currency' | 'language';
-type PaywallSource =
-  | 'setup_complete'
-  | 'ai_review'
-  | 'ai_expense_assist'
-  | 'ai_import_cleanup'
-  | 'ai_starter_plan'
-  | 'backup_toggle'
-  | 'settings_upgrade';
 
 type InsightMonthSummary = {
   id: string;
@@ -223,102 +247,6 @@ type InsightSummary = {
   trendDelta: number | null;
 };
 
-const PREMIUM_PAYWALL_DISMISS_KEY = 'budget-buddy:premium-paywall-dismissed:v1';
-
-const getTransactionDisplayTitle = (
-  transaction: Transaction,
-  fallbackCategoryName?: string | null,
-) => transaction.note.trim() || transaction.subcategory || fallbackCategoryName || 'Expense';
-
-const findMatchingSubcategory = (subcategories: string[], candidate?: string | null) => {
-  if (!candidate) {
-    return '';
-  }
-
-  const normalizedCandidate = candidate.trim().toLowerCase();
-  if (!normalizedCandidate) {
-    return '';
-  }
-
-  const exactMatch = subcategories.find(
-    (subcategory) => subcategory.trim().toLowerCase() === normalizedCandidate,
-  );
-
-  if (exactMatch) {
-    return exactMatch;
-  }
-
-  return (
-    subcategories.find((subcategory) => {
-      const normalizedSubcategory = subcategory.trim().toLowerCase();
-      return (
-        normalizedCandidate.includes(normalizedSubcategory) ||
-        normalizedSubcategory.includes(normalizedCandidate)
-      );
-    }) ?? ''
-  );
-};
-
-const resolveExpenseSubcategory = (
-  category: Category | null | undefined,
-  candidate?: string | null,
-  { preferSingle = false }: { preferSingle?: boolean } = {},
-) => {
-  if (!category) {
-    return '';
-  }
-
-  const matched = findMatchingSubcategory(category.subcategories, candidate);
-  if (matched) {
-    return matched;
-  }
-
-  if (preferSingle && category.subcategories.length === 1) {
-    return category.subcategories[0];
-  }
-
-  return '';
-};
-const QUICK_START_PRESET_COUNT = 3;
-const MAX_RECENT_EXPENSE_TEMPLATES = 4;
-const MAX_RECENT_CATEGORY_SHORTCUTS = 4;
-
-const paywallSourceMeta: Record<
-  PaywallSource,
-  {
-    title: string;
-    subtitle: string;
-  }
-> = {
-  ai_expense_assist: {
-    title: 'Get smarter expense suggestions',
-    subtitle: 'Let the app suggest the right category, account, and repeat flag before you save.',
-  },
-  ai_import_cleanup: {
-    title: 'Unlock smart tidy-up',
-    subtitle: 'Scan imported categories for duplicates, naming drift, and repeat labels before the budget gets messy.',
-  },
-  ai_review: {
-    title: 'Unlock monthly check-ins',
-    subtitle: 'Get a quick end-of-month read that separates fixed bills from flexible spend.',
-  },
-  ai_starter_plan: {
-    title: 'Unlock starter hints',
-    subtitle: 'Pull likely category lanes from earlier months, then keep only the ones that still fit.',
-  },
-  backup_toggle: {
-    title: 'Unlock recoverable backup',
-    subtitle: 'Keep budgeting free and local, then turn on a recovery backup only when you want reinstall protection.',
-  },
-  settings_upgrade: {
-    title: 'Upgrade to Budget Buddy Premium',
-    subtitle: 'Unlock AI budgeting help and optional recovery backup without changing the local-first core app.',
-  },
-  setup_complete: {
-    title: 'Keep the budget working harder for you',
-    subtitle: 'The month is ready. Premium adds quick check-ins, smarter suggestions, and recoverable backup when you need it.',
-  },
-};
 
 type ForecastAlert = {
   tone: AlertTone;
@@ -353,89 +281,8 @@ type ForecastSnapshot = {
   totalSpent: number;
 };
 
-const insightWindowMeta: Record<InsightWindow, { label: string; months: number }> = {
-  quarter: { label: 'Quarter', months: 3 },
-  half: { label: '6 months', months: 6 },
-  year: { label: 'Year', months: 12 },
-};
-
-const budgetSetupStepMeta: Record<
-  BudgetSetupStep,
-  { label: string; title: string; subtitle: string }
-> = {
-  limit: {
-    label: 'Budget',
-    title: 'Budget amount',
-    subtitle: 'Set the amount first.',
-  },
-  categories: {
-    label: 'Categories',
-    title: 'Categories',
-    subtitle: 'Start broad, then add detail only when needed.',
-  },
-  review: {
-    label: 'Review',
-    title: 'Review',
-    subtitle: 'Check the balance before you start spending.',
-  },
-};
-
-const budgetSetupSteps: BudgetSetupStep[] = ['limit', 'categories', 'review'];
-
-const budgetBucketTargetRatio: Record<CategoryBucket, number> = {
-  needs: 0.5,
-  wants: 0.3,
-  savings: 0.2,
-};
-
-const categoryGlyphs = {
-  bag: '👜',
-  car: '🚗',
-  cart: '🛒',
-  cup: '☕',
-  dot: '•',
-  home: '🏠',
-  plus: '+',
-  wifi: '📱',
-} as const;
-
-const getMonthBounds = (monthId: string) => {
-  const monthDate = parseMonthId(monthId);
-  const start = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1, 12, 0, 0);
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 0, 12, 0, 0);
-
-  return { start, end };
-};
-
-const clampDateToMonth = (date: Date, monthId: string) => {
-  const { start, end } = getMonthBounds(monthId);
-  const normalized = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0);
-
-  if (normalized.getTime() < start.getTime()) {
-    return start;
-  }
-
-  if (normalized.getTime() > end.getTime()) {
-    return end;
-  }
-
-  return normalized;
-};
-
-const getDefaultExpenseDate = (monthId: string, referenceDate = new Date()) =>
-  clampDateToMonth(referenceDate, monthId);
-
-const formatExpenseDate = (date: Date, locale = getLocaleTag()) =>
-  new Intl.DateTimeFormat(locale, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(date);
-
-const maxRecentSelectorItems = 6;
-
 const pushRecentCode = <T extends string>(codes: T[], nextCode: T) =>
-  [nextCode, ...codes.filter((code) => code !== nextCode)].slice(0, maxRecentSelectorItems);
+  [nextCode, ...codes.filter((code) => code !== nextCode)].slice(0, MAX_RECENT_SELECTOR_ITEMS);
 
 const resolveOptionsByCodes = <T extends { code: string }>(options: T[], codes: string[]) => {
   const optionByCode = new Map(options.map((option) => [option.code, option]));
@@ -464,69 +311,6 @@ const matchesSelectorQuery = (
   normalizedQuery.length === 0 ||
   values.some((value) => value?.toLowerCase().includes(normalizedQuery));
 
-const getCategoryIcon = (name: string) => categoryGlyphs[getCategoryGlyph(name)];
-
-const getSuggestedBudgetSetupStep = (
-  monthlyLimit: number,
-  categoryCount: number,
-  allocationDifference: number,
-): BudgetSetupStep => {
-  if (monthlyLimit <= 0) {
-    return 'limit';
-  }
-
-  if (categoryCount === 0) {
-    return 'categories';
-  }
-
-  return Math.abs(allocationDifference) <= Math.max(monthlyLimit * 0.05, 25)
-    ? 'review'
-    : 'categories';
-};
-
-const getInsightWeekBucket = (date: Date) => {
-  const day = date.getDate();
-
-  if (day <= 7) {
-    return 0;
-  }
-
-  if (day <= 14) {
-    return 1;
-  }
-
-  if (day <= 21) {
-    return 2;
-  }
-
-  return 3;
-};
-
-const getStartOfDay = (date: Date) => {
-  const next = new Date(date);
-  next.setHours(0, 0, 0, 0);
-  return next;
-};
-
-const getEndOfDay = (date: Date) => {
-  const next = new Date(date);
-  next.setHours(23, 59, 59, 999);
-  return next;
-};
-
-const getStartOfWeek = (date: Date) => {
-  const next = getStartOfDay(date);
-  const dayOffset = (next.getDay() + 6) % 7;
-  next.setDate(next.getDate() - dayOffset);
-  return next;
-};
-
-const getEndOfWeek = (date: Date) => {
-  const next = getStartOfWeek(date);
-  next.setDate(next.getDate() + 6);
-  next.setHours(23, 59, 59, 999);
-  return next;
-};
 
 const matchesActivityScope = (
   happenedAt: string,
@@ -1261,6 +1045,7 @@ export default function App() {
   const [showExpenseDatePicker, setShowExpenseDatePicker] = useState(false);
   const [showExpenseDetails, setShowExpenseDetails] = useState(false);
   const [isExpenseSheetOpen, setIsExpenseSheetOpen] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
   const [selectedCategoryDetailId, setSelectedCategoryDetailId] = useState<string | null>(null);
 
@@ -1330,6 +1115,7 @@ export default function App() {
   const latestStateRef = useRef(appState);
   const bootstrappedUserIdRef = useRef<string | null>(null);
   const setupPaywallPromptShownRef = useRef(false);
+  const setupConfettiShownRef = useRef(false);
   const { width, height } = useWindowDimensions();
   const isCompact = width < 430;
   const isNarrow = width < 375;
@@ -1899,6 +1685,14 @@ export default function App() {
       ? `Savings ${formatCurrency(savingsBucketSummary.planned)}`
       : 'No savings lane yet',
   ];
+  useEffect(() => {
+    if (!isBudgetSetupComplete || setupConfettiShownRef.current) {
+      return;
+    }
+    setupConfettiShownRef.current = true;
+    setShowConfetti(true);
+  }, [isBudgetSetupComplete]);
+
   useEffect(() => {
     if (
       !hasLoadedPaywallDismissal ||
@@ -2768,6 +2562,11 @@ export default function App() {
     },
   };
   const screenTabs: ScreenId[] = ['home', 'spend', 'settings'];
+  const tabIcons: Partial<Record<ScreenId, string>> = {
+    home: '💰',
+    spend: '📊',
+    settings: '⚙️',
+  };
   const activeNavScreen: ScreenId =
     activeScreen === 'plan' || activeScreen === 'insights' ? 'settings' : activeScreen;
   const isSignedIn = Boolean(authUser && !authUser.isAnonymous);
@@ -3791,7 +3590,7 @@ export default function App() {
     setIsAccountSheetOpen(false);
     resetAccountForm();
     showToast({
-      message: editingAccountId ? `${trimmedName} updated.` : `${trimmedName} added to your accounts.`,
+      message: editingAccountId ? `${trimmedName} updated!` : `${trimmedName} added to your accounts!`,
       tone: 'success',
     });
     void triggerHaptic('success');
@@ -3837,7 +3636,7 @@ export default function App() {
               resetAccountForm();
             }
 
-            showToast({ message: `${account.name} removed from your accounts.`, tone: 'success' });
+            showToast({ message: `${account.name} removed.`, tone: 'success' });
             void triggerHaptic('success');
           },
         },
@@ -4268,7 +4067,7 @@ export default function App() {
     setIsExpenseSheetOpen(false);
     resetTransactionForm();
     showToast({
-      message: editingTransactionId ? 'Expense updated.' : 'Expense added.',
+      message: editingTransactionId ? 'Expense updated!' : 'Expense logged!',
       tone: 'success',
     });
     void triggerHaptic('success');
@@ -4304,7 +4103,7 @@ export default function App() {
             ...month,
             transactions: month.transactions.filter((transaction) => transaction.id !== transactionId),
           }));
-          showToast({ message: 'Expense deleted.', tone: 'success' });
+          showToast({ message: 'Expense removed.', tone: 'success' });
           void triggerHaptic('success');
         },
       },
@@ -4358,7 +4157,7 @@ export default function App() {
       resetCategoryForm();
       setShowPlanCategoryList(false);
       setPlanSetupStep('categories');
-      showToast({ message: `${trimmedName} added.`, tone: 'success' });
+      showToast({ message: `${trimmedName} added!`, tone: 'success' });
       void triggerHaptic('success');
       return;
     }
@@ -4377,7 +4176,7 @@ export default function App() {
     resetCategoryForm();
     setShowPlanCategoryList(false);
     showToast({
-      message: editingCategoryId ? `${trimmedName} updated.` : `${trimmedName} added.`,
+      message: editingCategoryId ? `${trimmedName} updated!` : `${trimmedName} added!`,
       tone: 'success',
     });
     void triggerHaptic('success');
@@ -4471,7 +4270,7 @@ export default function App() {
                 (transaction) => transaction.categoryId !== categoryId,
               ),
             }));
-            showToast({ message: 'Category deleted.', tone: 'success' });
+            showToast({ message: 'Category removed.', tone: 'success' });
             void triggerHaptic('success');
           },
         },
@@ -4502,6 +4301,11 @@ export default function App() {
       return;
     }
 
+    const wasAlreadyComplete = editingGoalId
+      ? appState.goals.find((g) => g.id === editingGoalId)?.saved ?? 0 >= target
+      : false;
+    const isNowComplete = saved >= target && target > 0;
+
     updateAppState((current) => ({
       ...current,
       goals: editingGoalId
@@ -4529,11 +4333,18 @@ export default function App() {
     }));
 
     resetGoalForm();
-    showToast({
-      message: editingGoalId ? `${trimmedName} updated.` : `${trimmedName} added.`,
-      tone: 'success',
-    });
-    void triggerHaptic('success');
+
+    if (isNowComplete && !wasAlreadyComplete) {
+      setShowConfetti(true);
+      showToast({ message: `🎉 ${trimmedName} goal reached!`, tone: 'success', durationMs: 4000 });
+      void triggerHaptic('success');
+    } else {
+      showToast({
+        message: editingGoalId ? `${trimmedName} updated.` : `${trimmedName} saved!`,
+        tone: 'success',
+      });
+      void triggerHaptic('success');
+    }
   };
 
   const editGoal = (goal: Goal) => {
@@ -4556,7 +4367,7 @@ export default function App() {
             ...current,
             goals: current.goals.filter((goal) => goal.id !== goalId),
           }));
-          showToast({ message: 'Goal deleted.', tone: 'success' });
+          showToast({ message: 'Goal removed.', tone: 'success' });
           void triggerHaptic('success');
         },
       },
@@ -4861,30 +4672,34 @@ export default function App() {
     return (
       <>
         <View style={styles.expenseFormStack}>
-          <View style={[styles.fieldCard, styles.fieldWide]}>
+          <View style={styles.expenseAmountCard}>
             <Text style={styles.fieldLabel}>Amount</Text>
-            <TextInput
-              style={styles.expenseAmountInput}
-              value={expenseAmount}
-              onChangeText={setExpenseAmount}
-              keyboardType="numeric"
-              placeholder="42"
-              placeholderTextColor={currentTheme.placeholder}
-              selectionColor={currentTheme.accent}
-            />
+            <View style={styles.expenseAmountRow}>
+              <Text style={styles.expenseAmountCurrency}>{activeMonthCurrencyMarker}</Text>
+              <TextInput
+                style={styles.expenseAmountInput}
+                value={expenseAmount}
+                onChangeText={setExpenseAmount}
+                keyboardType="numeric"
+                placeholder="0"
+                placeholderTextColor={currentTheme.placeholder}
+                selectionColor={currentTheme.accent}
+              />
+            </View>
+            <Text style={styles.expenseAmountHint}>tap a shortcut below or type any amount</Text>
           </View>
 
-          <View style={styles.filterRowCompact}>
+          <View style={styles.quickAmountRow}>
             {[5, 10, 20, 50, 100].map((amount) => {
               const selected = expenseAmount === String(amount);
 
               return (
                 <Pressable
                   key={amount}
-                  style={[styles.filterChip, selected && styles.filterChipActive]}
+                  style={[styles.quickAmountChip, selected && styles.quickAmountChipActive]}
                   onPress={() => setExpenseAmount(String(amount))}
                 >
-                  <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
+                  <Text style={[styles.quickAmountChipText, selected && styles.quickAmountChipTextActive]}>
                     {formatCurrency(amount)}
                   </Text>
                 </Pressable>
@@ -4933,41 +4748,45 @@ export default function App() {
             <Text style={styles.expenseSectionMeta}>Recent first</Text>
           ) : null}
         </View>
-        <View style={styles.chipWrap}>
-          {activeMonth.categories.map((category) => {
-            const theme = categoryThemes[category.themeId];
+          <View style={styles.chipWrap}>
+            {activeMonth.categories.map((category) => {
+              const theme = categoryThemes[category.themeId];
+              const isSuggested = expenseAiSuggestion?.categoryId === category.id;
+              const icon = getCategoryIcon(category.name);
+              const isEmojiIcon = icon.length > 1;
 
-            return (
-              <Pressable
-                key={category.id}
-                style={[
-                  styles.selectionChip,
-                  { backgroundColor: theme.chip },
-                  category.id === expenseCategoryId && styles.selectionChipActive,
-                ]}
-                onPress={() => selectExpenseCategory(category.id)}
-              >
-                <Text
+              return (
+                <Pressable
+                  key={category.id}
                   style={[
-                    styles.selectionChipText,
-                    { color: theme.chipText },
-                    category.id === expenseCategoryId && styles.selectionChipTextActive,
+                    styles.expenseCategoryChip,
+                    { backgroundColor: theme.chip },
+                    category.id === expenseCategoryId && styles.selectionChipActive,
+                    isSuggested && { borderWidth: 2, borderColor: currentTheme.accent },
                   ]}
+                  onPress={() => selectExpenseCategory(category.id)}
                 >
-                  {category.name}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+                  <Text
+                    style={[
+                      styles.expenseCategoryChipText,
+                      { color: theme.chipText },
+                      category.id === expenseCategoryId && styles.selectionChipTextActive,
+                    ]}
+                  >
+                    {isEmojiIcon ? `${icon} ` : ''}{category.name}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
-        <View style={styles.actionRow}>
-          <Pressable style={styles.primaryButton} onPress={submitTransaction}>
-            <Text style={styles.primaryButtonText}>
-              {editingTransactionId ? 'Update expense' : 'Add expense'}
-            </Text>
-          </Pressable>
+        <Pressable style={[styles.primaryButton, styles.expenseSubmitButton]} onPress={submitTransaction}>
+          <Text style={[styles.primaryButtonText, styles.expenseSubmitButtonText]}>
+            {editingTransactionId ? '✓ Update expense' : '＋ Log it'}
+          </Text>
+        </Pressable>
 
+        <View style={styles.expenseSecondaryRow}>
           <Pressable
             style={styles.ghostButton}
             onPress={() => {
@@ -6183,11 +6002,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View pointerEvents="none" style={styles.backgroundLayer}>
-        <View style={[styles.orb, styles.orbPrimary]} />
-        <View style={[styles.orb, styles.orbSoft]} />
-        <View style={[styles.orb, styles.orbWarm]} />
-      </View>
+      <AnimatedBackground />
 
       <ScrollView
         style={styles.scroll}
@@ -6285,17 +6100,17 @@ export default function App() {
                     </View>
 
                     <View style={styles.heroMiniStatRow}>
-                      <View style={styles.heroMiniStat}>
+                      <View style={[styles.heroMiniStat, styles.heroMiniStatSpent]}>
                         <Text style={styles.heroMiniStatValue}>{formatCurrency(totalSpent)}</Text>
-                        <Text style={styles.heroMiniStatLabel}>Spent</Text>
+                        <Text style={styles.heroMiniStatLabel}>💸 Spent</Text>
                       </View>
-                      <View style={styles.heroMiniStat}>
+                      <View style={[styles.heroMiniStat, styles.heroMiniStatFixed]}>
                         <Text style={styles.heroMiniStatValue}>{formatCurrency(fixedLeftTotal)}</Text>
-                        <Text style={styles.heroMiniStatLabel}>Fixed left</Text>
+                        <Text style={styles.heroMiniStatLabel}>🔒 Fixed left</Text>
                       </View>
-                      <View style={styles.heroMiniStat}>
+                      <View style={[styles.heroMiniStat, styles.heroMiniStatFree]}>
                         <Text style={styles.heroMiniStatValue}>{formatCurrency(flexibleLeftTotal)}</Text>
-                        <Text style={styles.heroMiniStatLabel}>Free to move</Text>
+                        <Text style={styles.heroMiniStatLabel}>✦ Free to move</Text>
                       </View>
                     </View>
                   </View>
@@ -6305,7 +6120,7 @@ export default function App() {
                       style={[styles.primaryButton, styles.heroActionPrimary]}
                       onPress={() => openExpenseCapture(undefined, null)}
                     >
-                      <Text style={styles.primaryButtonText}>Add expense</Text>
+                      <Text style={styles.primaryButtonText}>＋ Log expense</Text>
                     </Pressable>
                   </View>
 
@@ -6893,51 +6708,64 @@ export default function App() {
         {activeScreen === 'plan' ? (
           <>
             {isInitialBudgetSetup ? (
-              <View style={styles.card}>
-                <Text style={styles.sectionTitle}>Create budget</Text>
-                <Text style={styles.sectionSubtitle}>
-                  Set the amount first. Categories come right after.
+              <View style={styles.budgetHeroCard}>
+                {/* Hero emoji bubble */}
+                <View style={{ alignItems: 'center', marginBottom: 16 }}>
+                  <View style={styles.budgetHeroEmojiBubble}>
+                    <Text style={styles.budgetHeroEmojiText}>🎯</Text>
+                  </View>
+                </View>
+
+                <Text style={[styles.budgetHeroTitle, { textAlign: 'center', color: currentTheme.text }]}>
+                  Let's set your budget
+                </Text>
+                <Text style={[styles.budgetHeroSubtitle, { textAlign: 'center', marginBottom: 20 }]}>
+                  Tell us your monthly amount and we'll help you divide it into categories that make sense.
                 </Text>
 
-                <View style={styles.formShell}>
-                  <View style={[styles.fieldCard, styles.fieldWide]}>
-                    <Text style={styles.fieldLabel}>Monthly amount</Text>
+                {/* Big amount input */}
+                <View style={[styles.fieldCard, styles.fieldWide, { marginBottom: 8 }]}>
+                  <View style={styles.budgetAmountRow}>
+                    <Text style={styles.budgetAmountCurrencyText}>$</Text>
                     <TextInput
-                      style={styles.fieldInput}
+                      style={styles.budgetAmountInput}
                       value={activeMonth.monthlyLimit}
                       onChangeText={updateMonthlyLimit}
                       keyboardType="numeric"
-                      placeholder="1700"
+                      placeholder="2000"
                       placeholderTextColor={currentTheme.placeholder}
                       selectionColor={currentTheme.accent}
                     />
-                    <Text style={styles.fieldHint}>
-                      Use the amount you want {activeMonthName.toLowerCase()} to cover.
-                    </Text>
                   </View>
+                  <Text style={styles.budgetAmountHint}>
+                    Monthly budget for {activeMonthName}
+                  </Text>
                 </View>
 
                 {monthlyLimitNumber > 0 ? (
                   <>
-                    <Text style={styles.fieldLabel}>Start with essentials</Text>
-                    <View style={styles.chipWrap}>
+                    <Text style={[styles.fieldLabel, { marginTop: 16, marginBottom: 10 }]}>
+                      Start with essentials ✨
+                    </Text>
+                    <View style={styles.presetTileGrid}>
                       {quickStartPresets.map((preset) => {
                         const theme = categoryThemes[preset.themeId];
-
                         return (
                           <View
                             key={`quick-start-${preset.name}`}
-                            style={[styles.selectionChip, { backgroundColor: theme.chip }]}
+                            style={[styles.presetTile, { backgroundColor: theme.chip }]}
                           >
-                            <Text style={[styles.selectionChipText, { color: theme.chipText }]}>
-                              {preset.name} {formatCurrency(preset.planned)}
+                            <Text style={styles.presetTileIcon}>{getCategoryIcon(preset.name)}</Text>
+                            <Text style={[styles.presetTileName, { color: theme.chipText }]}>{preset.name}</Text>
+                            <Text style={[styles.presetTileAmount, { color: theme.chipText }]}>
+                              {formatCurrency(preset.planned)}
                             </Text>
                           </View>
                         );
                       })}
                     </View>
                     <Text style={styles.selectorHint}>
-                      You can start empty or drop in a few broad lanes and adjust them later.
+                      Start empty or pick quick lanes — you can always adjust them later.
                     </Text>
                   </>
                 ) : (
@@ -6951,7 +6779,7 @@ export default function App() {
                     style={[styles.primaryButton, monthlyLimitNumber <= 0 && styles.buttonDisabled]}
                     onPress={startBudgetSetup}
                   >
-                    <Text style={styles.primaryButtonText}>Start budget</Text>
+                    <Text style={styles.primaryButtonText}>Start budget →</Text>
                   </Pressable>
 
                   {monthlyLimitNumber > 0 ? (
@@ -6986,8 +6814,8 @@ export default function App() {
                   ) : null}
                 </View>
 
-                <View style={styles.planStepRow}>
-                  {budgetSetupSteps.map((step) => {
+                <View style={styles.setupStepper}>
+                  {budgetSetupSteps.flatMap((step, idx) => {
                     const isActive = planSetupStep === step;
                     const isDone =
                       (step === 'limit' && monthlyLimitNumber > 0) ||
@@ -6995,28 +6823,56 @@ export default function App() {
                       (step === 'review' &&
                         isBudgetSetupReady &&
                         Math.abs(allocationDifference) <= Math.max(monthlyLimitNumber * 0.05, 25));
+                    const stepNum = idx + 1;
 
-                    return (
+                    const circleEl = (
                       <Pressable
                         key={step}
-                        style={[
-                          styles.planStepChip,
-                          isActive && styles.planStepChipActive,
-                          !isActive && isDone && styles.planStepChipDone,
-                        ]}
+                        style={styles.setupStepItem}
                         onPress={() => setPlanSetupStep(step)}
                       >
+                        <View
+                          style={[
+                            styles.setupStepCircle,
+                            isActive && styles.setupStepCircleActive,
+                            !isActive && isDone && styles.setupStepCircleDone,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.setupStepNum,
+                              isActive && styles.setupStepNumActive,
+                              !isActive && isDone && styles.setupStepNumDone,
+                            ]}
+                          >
+                            {!isActive && isDone ? '✓' : String(stepNum)}
+                          </Text>
+                        </View>
                         <Text
                           style={[
-                            styles.planStepChipText,
-                            isActive && styles.planStepChipTextActive,
-                            !isActive && isDone && styles.planStepChipTextDone,
+                            styles.setupStepLabel,
+                            isActive && styles.setupStepLabelActive,
+                            !isActive && isDone && styles.setupStepLabelDone,
                           ]}
                         >
                           {budgetSetupStepMeta[step].label}
                         </Text>
                       </Pressable>
                     );
+
+                    if (idx < budgetSetupSteps.length - 1) {
+                      return [
+                        circleEl,
+                        <View
+                          key={`connector-${step}`}
+                          style={[
+                            styles.setupStepConnector,
+                            isDone && styles.setupStepConnectorDone,
+                          ]}
+                        />,
+                      ];
+                    }
+                    return [circleEl];
                   })}
                 </View>
 
@@ -7120,23 +6976,32 @@ export default function App() {
                     <Text style={styles.selectorHint}>
                       A 50 / 30 / 20 split is a good starting point if you want a balanced plan.
                     </Text>
-                    <View style={styles.budgetGuideList}>
-                      {bucketSummaries.map((summary) => (
-                        <View key={summary.bucket} style={styles.budgetGuideCard}>
-                          <View style={styles.budgetGuideHeader}>
-                            <Text style={styles.budgetGuideLabel}>
+                    <View style={styles.budgetGuideGrid}>
+                      {bucketSummaries.map((summary) => {
+                        const bucketEmoji =
+                          summary.bucket === 'needs' ? '🏠' :
+                          summary.bucket === 'wants' ? '✨' : '💰';
+                        const borderColor =
+                          summary.bucket === 'needs' ? currentTheme.progressAlert :
+                          summary.bucket === 'wants' ? currentTheme.progressWarning : currentTheme.progressGood;
+                        return (
+                          <View
+                            key={summary.bucket}
+                            style={[styles.budgetGuideCard2, { borderLeftColor: borderColor }]}
+                          >
+                            <Text style={styles.budgetGuideCard2Emoji}>{bucketEmoji}</Text>
+                            <Text style={styles.budgetGuideCard2Percent}>
+                              {Math.round(summary.targetRatio * 100)}%
+                            </Text>
+                            <Text style={styles.budgetGuideCard2Label}>
                               {categoryBucketMeta[summary.bucket].label}
                             </Text>
-                            <View style={styles.budgetGuideChip}>
-                              <Text style={styles.budgetGuideChipText}>
-                                {Math.round(summary.targetRatio * 100)}%
-                              </Text>
-                            </View>
+                            <Text style={styles.budgetGuideCard2Amount}>
+                              {formatCurrency(summary.target)}
+                            </Text>
                           </View>
-                          <Text style={styles.budgetGuideValue}>{formatCurrency(summary.target)}</Text>
-                          <Text style={styles.budgetGuideMeta}>Suggested share of the month</Text>
-                        </View>
-                      ))}
+                        );
+                      })}
                     </View>
                   </>
                 ) : (
@@ -7173,8 +7038,8 @@ export default function App() {
 
             {planSetupStep === 'categories' ? (
               <View style={styles.card}>
-                <View style={styles.planStepRow}>
-                  {budgetSetupSteps.map((step) => {
+                <View style={styles.setupStepper}>
+                  {budgetSetupSteps.flatMap((step, idx) => {
                     const isActive = planSetupStep === step;
                     const isDone =
                       (step === 'limit' && monthlyLimitNumber > 0) ||
@@ -7182,28 +7047,56 @@ export default function App() {
                       (step === 'review' &&
                         isBudgetSetupReady &&
                         Math.abs(allocationDifference) <= Math.max(monthlyLimitNumber * 0.05, 25));
+                    const stepNum = idx + 1;
 
-                    return (
+                    const circleEl = (
                       <Pressable
                         key={step}
-                        style={[
-                          styles.planStepChip,
-                          isActive && styles.planStepChipActive,
-                          !isActive && isDone && styles.planStepChipDone,
-                        ]}
+                        style={styles.setupStepItem}
                         onPress={() => setPlanSetupStep(step)}
                       >
+                        <View
+                          style={[
+                            styles.setupStepCircle,
+                            isActive && styles.setupStepCircleActive,
+                            !isActive && isDone && styles.setupStepCircleDone,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.setupStepNum,
+                              isActive && styles.setupStepNumActive,
+                              !isActive && isDone && styles.setupStepNumDone,
+                            ]}
+                          >
+                            {!isActive && isDone ? '✓' : String(stepNum)}
+                          </Text>
+                        </View>
                         <Text
                           style={[
-                            styles.planStepChipText,
-                            isActive && styles.planStepChipTextActive,
-                            !isActive && isDone && styles.planStepChipTextDone,
+                            styles.setupStepLabel,
+                            isActive && styles.setupStepLabelActive,
+                            !isActive && isDone && styles.setupStepLabelDone,
                           ]}
                         >
                           {budgetSetupStepMeta[step].label}
                         </Text>
                       </Pressable>
                     );
+
+                    if (idx < budgetSetupSteps.length - 1) {
+                      return [
+                        circleEl,
+                        <View
+                          key={`connector-cat-${step}`}
+                          style={[
+                            styles.setupStepConnector,
+                            isDone && styles.setupStepConnectorDone,
+                          ]}
+                        />,
+                      ];
+                    }
+                    return [circleEl];
                   })}
                 </View>
 
@@ -7222,24 +7115,31 @@ export default function App() {
                   ) : null}
                 </View>
 
-                <View
-                  style={[
-                    styles.planSummaryStrip,
-                    allocationDifference < 0
-                      ? styles.planSummaryStripAlert
-                      : allocationDifference > 0
-                        ? styles.planSummaryStripGood
-                        : styles.planSummaryStripNeutral,
-                  ]}
-                >
-                  <Text style={styles.planSummaryTitle}>
+                <View style={styles.allocationBanner}>
+                  <Text style={styles.allocationBannerText}>
                     {allocationDifference < 0
-                      ? `${formatCurrency(Math.abs(allocationDifference))} over`
+                      ? `⚠️ ${formatCurrency(Math.abs(allocationDifference))} over budget`
                       : allocationDifference > 0
-                        ? `${formatCurrency(allocationDifference)} left`
-                        : 'Fully assigned'}
+                        ? `💡 ${formatCurrency(allocationDifference)} left to assign`
+                        : '✅ Fully assigned!'}
                   </Text>
-                  <Text style={styles.planSummaryMeta}>
+                  <View style={styles.allocationProgressBar}>
+                    <View
+                      style={[
+                        styles.allocationProgressFill,
+                        {
+                          width: `${Math.round(clamp(allocationProgress) * 100)}%`,
+                          backgroundColor:
+                            allocationProgress >= 1
+                              ? currentTheme.progressAlert
+                              : allocationProgress >= 0.9
+                                ? currentTheme.progressWarning
+                                : currentTheme.progressGood,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.allocationBannerMeta}>
                     {`${formatCurrency(totalPlanned)} assigned of ${
                       monthlyLimitNumber > 0 ? formatCurrency(monthlyLimitNumber) : 'your budget'
                     }`}
@@ -7365,7 +7265,7 @@ export default function App() {
                     </Pressable>
                   ) : null}
                 </View>
-                <View style={styles.chipWrap}>
+                <View style={styles.presetTileGrid}>
                   {quickStartPresets.map((preset) => {
                     const theme = categoryThemes[preset.themeId];
                     const matchingCategory =
@@ -7377,30 +7277,29 @@ export default function App() {
                         categoryName.trim().toLowerCase() === preset.name.toLowerCase() &&
                         categoryPlanned.trim() === String(preset.planned)) ||
                       false;
+                    const isHighlighted = selectedPreset || Boolean(matchingCategory);
 
                     return (
                       <Pressable
                         key={preset.name}
                         style={[
-                          styles.selectionChip,
+                          styles.presetTile,
                           { backgroundColor: theme.chip },
-                          (selectedPreset || Boolean(matchingCategory)) && styles.selectionChipActive,
+                          isHighlighted && {
+                            borderWidth: 2,
+                            borderColor: currentTheme.accent,
+                          },
                         ]}
                         onPress={() =>
                           matchingCategory ? editCategory(matchingCategory) : customizePreset(preset)
                         }
                       >
-                        <Text
-                          style={[
-                            styles.selectionChipText,
-                            { color: theme.chipText },
-                            (selectedPreset || Boolean(matchingCategory)) &&
-                              styles.selectionChipTextActive,
-                          ]}
-                        >
-                          {matchingCategory
-                            ? `Edit ${preset.name}`
-                            : `${preset.name} ${formatCurrency(preset.planned)}`}
+                        <Text style={styles.presetTileIcon}>{getCategoryIcon(preset.name)}</Text>
+                        <Text style={[styles.presetTileName, { color: theme.chipText }]}>
+                          {matchingCategory ? `Edit ${preset.name}` : preset.name}
+                        </Text>
+                        <Text style={[styles.presetTileAmount, { color: theme.chipText }]}>
+                          {matchingCategory ? '✓ added' : formatCurrency(preset.planned)}
                         </Text>
                       </Pressable>
                     );
@@ -7520,30 +7419,35 @@ export default function App() {
                             isCategoryBucketAuto && styles.filterChipTextActive,
                           ]}
                         >
-                          Auto
+                          ⚡ Auto
                         </Text>
                       </Pressable>
-                      {categoryBucketOrder.map((bucket) => (
-                        <Pressable
-                          key={bucket}
-                          style={[
-                            styles.filterChip,
-                            !isCategoryBucketAuto && categoryBucket === bucket && styles.filterChipActive,
-                          ]}
-                          onPress={() => setManualCategoryBucket(bucket)}
-                        >
-                          <Text
+                      {categoryBucketOrder.map((bucket) => {
+                        const bucketEmoji =
+                          bucket === 'needs' ? '🏠' :
+                          bucket === 'wants' ? '✨' : '💰';
+                        return (
+                          <Pressable
+                            key={bucket}
                             style={[
-                              styles.filterChipText,
-                              !isCategoryBucketAuto &&
-                                categoryBucket === bucket &&
-                                styles.filterChipTextActive,
+                              styles.filterChip,
+                              !isCategoryBucketAuto && categoryBucket === bucket && styles.filterChipActive,
                             ]}
+                            onPress={() => setManualCategoryBucket(bucket)}
                           >
-                            {categoryBucketMeta[bucket].label}
-                          </Text>
-                        </Pressable>
-                      ))}
+                            <Text
+                              style={[
+                                styles.filterChipText,
+                                !isCategoryBucketAuto &&
+                                  categoryBucket === bucket &&
+                                  styles.filterChipTextActive,
+                              ]}
+                            >
+                              {bucketEmoji} {categoryBucketMeta[bucket].label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
                     </View>
 
                     <Text style={styles.fieldLabel}>Theme</Text>
@@ -8723,6 +8627,14 @@ export default function App() {
         {activeScreen === 'settings' ? renderSettingsScreen() : null}
       </ScrollView>
       {renderPremiumPaywall()}
+      {showConfetti && (
+        <ConfettiCannon
+          count={200}
+          origin={{ x: width / 2, y: -20 }}
+          fadeOut={true}
+          onAnimationEnd={() => setShowConfetti(false)}
+        />
+      )}
       <Modal
         animationType="slide"
         transparent
@@ -8736,14 +8648,14 @@ export default function App() {
             <View style={styles.sheetHeader}>
               <View style={styles.sheetHeaderCopy}>
                 <Text style={styles.sheetTitle}>
-                  {editingTransactionId ? 'Edit expense' : 'Add expense'}
+                  {editingTransactionId ? '✏️ Edit expense' : '💸 Log expense'}
                 </Text>
                 <Text style={styles.sheetSubtitle}>
-                  Keep the entry simple now. You can refine it later from the activity list.
+                  {editingTransactionId ? 'Update the details below.' : 'What did you spend on?'}
                 </Text>
               </View>
-              <Pressable style={styles.secondaryButton} onPress={resetTransactionForm}>
-                <Text style={styles.secondaryButtonText}>Close</Text>
+              <Pressable style={styles.sheetCloseButton} onPress={resetTransactionForm}>
+                <Text style={styles.sheetCloseButtonText}>✕</Text>
               </Pressable>
             </View>
 
@@ -9308,12 +9220,16 @@ export default function App() {
               navigateToScreen(screenId);
             }}
           >
-            <View
-              style={[
-                styles.bottomNavMarker,
-                activeNavScreen === screenId && styles.bottomNavMarkerActive,
-              ]}
-            />
+            {tabIcons[screenId] ? (
+              <Text
+                style={[
+                  styles.bottomNavIcon,
+                  activeNavScreen === screenId && styles.bottomNavIconActive,
+                ]}
+              >
+                {tabIcons[screenId]}
+              </Text>
+            ) : null}
             <Text
               style={[
                 styles.bottomNavText,
@@ -9610,17 +9526,29 @@ const createStyles = (
       textTransform: 'uppercase',
       letterSpacing: 0.4,
     },
+    heroMiniStatSpent: {
+      borderLeftWidth: 3,
+      borderLeftColor: theme.progressAlert,
+    },
+    heroMiniStatFixed: {
+      borderLeftWidth: 3,
+      borderLeftColor: theme.progressWarning,
+    },
+    heroMiniStatFree: {
+      borderLeftWidth: 3,
+      borderLeftColor: theme.progressGood,
+    },
     heroInlineNote: {
-      backgroundColor: theme.surfaceTint,
+      backgroundColor: theme.accentSoft,
       borderRadius: 18,
       borderWidth: 1,
-      borderColor: theme.divider,
+      borderColor: theme.accentBorder,
       paddingHorizontal: 12,
       paddingVertical: 11,
       gap: 3,
     },
     heroInlineNoteTitle: {
-      color: theme.text,
+      color: theme.accentText,
       fontSize: 12,
       fontWeight: '800',
     },
@@ -10453,6 +10381,10 @@ const createStyles = (
       marginTop: 10,
       marginBottom: 10,
     },
+    expenseFormStack: {
+      gap: 10,
+      marginBottom: 12,
+    },
     fieldCard: {
       flex: 1,
       backgroundColor: theme.surfaceMuted,
@@ -10490,11 +10422,129 @@ const createStyles = (
       fontWeight: '700',
       marginBottom: 4,
     },
+    expenseSectionHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 8,
+    },
+    expenseSectionMeta: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
     fieldInput: {
       fontSize: 15,
       fontWeight: '700',
       color: theme.text,
       paddingVertical: 6,
+    },
+    expenseAmountInput: {
+      fontSize: isCompact ? 30 : 34,
+      lineHeight: isCompact ? 36 : 40,
+      fontWeight: '800',
+      color: theme.text,
+      paddingVertical: 4,
+      letterSpacing: -0.6,
+      flex: 1,
+    },
+    expenseAmountCard: {
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 22,
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 10,
+      borderWidth: 1,
+      borderColor: theme.divider,
+    },
+    expenseAmountRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    expenseAmountCurrency: {
+      fontSize: isCompact ? 22 : 26,
+      fontWeight: '800',
+      color: theme.textMuted,
+      letterSpacing: -0.4,
+      paddingTop: 4,
+    },
+    expenseAmountHint: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '600',
+      marginTop: 2,
+    },
+    quickAmountRow: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    quickAmountChip: {
+      flex: 1,
+      backgroundColor: theme.surfaceSoft,
+      borderRadius: 16,
+      paddingVertical: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: theme.divider,
+    },
+    quickAmountChipActive: {
+      backgroundColor: theme.accent,
+      borderColor: theme.accent,
+    },
+    quickAmountChipText: {
+      color: theme.textMuted,
+      fontWeight: '800',
+      fontSize: 13,
+    },
+    quickAmountChipTextActive: {
+      color: theme.heroText,
+    },
+    expenseCategoryChip: {
+      borderRadius: 16,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+    },
+    expenseCategoryChipText: {
+      fontSize: 13,
+      fontWeight: '700',
+      textTransform: 'capitalize',
+    },
+    expenseSubmitButton: {
+      alignSelf: 'stretch',
+      paddingVertical: 16,
+      borderRadius: 22,
+      marginTop: 14,
+    },
+    expenseSubmitButtonText: {
+      fontSize: 16,
+      letterSpacing: 0.2,
+    },
+    expenseSecondaryRow: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center',
+      marginTop: 8,
+    },
+    sheetCloseButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: theme.surfaceSoft,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    sheetCloseButtonText: {
+      color: theme.textMuted,
+      fontSize: 14,
+      fontWeight: '800',
+      lineHeight: 16,
     },
     fieldValue: {
       fontSize: 16,
@@ -10525,6 +10575,21 @@ const createStyles = (
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
+    },
+    expenseInlineRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 2,
+    },
+    expenseDetailsPanel: {
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      padding: 12,
+      gap: 12,
+      marginTop: 10,
     },
     categorySuggestionBlock: {
       marginTop: 4,
@@ -11095,6 +11160,14 @@ const createStyles = (
     },
     bottomNavMarkerActive: {
       backgroundColor: theme.accent,
+    },
+    bottomNavIcon: {
+      fontSize: 20,
+      lineHeight: 24,
+      opacity: 0.45,
+    },
+    bottomNavIconActive: {
+      opacity: 1,
     },
     bottomNavText: {
       color: theme.textMuted,
@@ -12541,5 +12614,218 @@ const createStyles = (
     },
     sectionActionRow: {
       marginTop: 10,
+    },
+
+    // ── Budget hero card (initial setup) ──────────────────────────────────
+    budgetHeroCard: {
+      backgroundColor: theme.surface,
+      borderRadius: 24,
+      paddingVertical: 28,
+      paddingHorizontal: 20,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: theme.divider,
+    },
+    budgetHeroEmojiBubble: {
+      width: 72,
+      height: 72,
+      borderRadius: 36,
+      backgroundColor: theme.surfaceTint,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+    },
+    budgetHeroEmojiText: {
+      fontSize: 36,
+    },
+    budgetHeroTitle: {
+      fontSize: 24,
+      fontWeight: '800' as const,
+      color: theme.text,
+      marginBottom: 6,
+    },
+    budgetHeroSubtitle: {
+      fontSize: 13,
+      color: theme.textMuted,
+      lineHeight: 19,
+    },
+    budgetAmountRow: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 8,
+    },
+    budgetAmountCurrencyText: {
+      fontSize: 32,
+      fontWeight: '800' as const,
+      color: theme.textMuted,
+    },
+    budgetAmountInput: {
+      fontSize: 48,
+      fontWeight: '900' as const,
+      flex: 1,
+      color: theme.text,
+      paddingVertical: 0,
+    },
+    budgetAmountHint: {
+      fontSize: 11,
+      color: theme.textMuted,
+      marginTop: 4,
+    },
+
+    // ── Preset tile grid ──────────────────────────────────────────────────
+    presetTileGrid: {
+      flexDirection: 'row' as const,
+      flexWrap: 'wrap' as const,
+      gap: 10,
+      marginBottom: 8,
+    },
+    presetTile: {
+      flexBasis: '30%' as const,
+      flexGrow: 1,
+      aspectRatio: 1.1,
+      borderRadius: 20,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      padding: 12,
+      gap: 4,
+    },
+    presetTileIcon: {
+      fontSize: 26,
+    },
+    presetTileName: {
+      fontSize: 11,
+      fontWeight: '800' as const,
+      textAlign: 'center' as const,
+    },
+    presetTileAmount: {
+      fontSize: 10,
+      textAlign: 'center' as const,
+    },
+
+    // ── Setup stepper ─────────────────────────────────────────────────────
+    setupStepper: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      marginBottom: 20,
+    },
+    setupStepItem: {
+      alignItems: 'center' as const,
+      flex: 1,
+    },
+    setupStepCircle: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      borderWidth: 2,
+      borderColor: theme.divider,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      backgroundColor: theme.surface,
+    },
+    setupStepCircleActive: {
+      borderColor: theme.accent,
+      backgroundColor: theme.accent,
+    },
+    setupStepCircleDone: {
+      borderColor: theme.accentBorder,
+      backgroundColor: theme.accentSoft,
+    },
+    setupStepNum: {
+      fontSize: 13,
+      fontWeight: '800' as const,
+      color: theme.textMuted,
+    },
+    setupStepNumActive: {
+      color: theme.heroText,
+    },
+    setupStepNumDone: {
+      color: theme.accentText,
+    },
+    setupStepLabel: {
+      fontSize: 10,
+      fontWeight: '700' as const,
+      color: theme.textMuted,
+      marginTop: 4,
+      textAlign: 'center' as const,
+    },
+    setupStepLabelActive: {
+      color: theme.accent,
+    },
+    setupStepLabelDone: {
+      color: theme.accentText,
+    },
+    setupStepConnector: {
+      height: 2,
+      flex: 1,
+      backgroundColor: theme.divider,
+      marginBottom: 16,
+    },
+    setupStepConnectorDone: {
+      backgroundColor: theme.accentBorder,
+    },
+
+    // ── Allocation banner ─────────────────────────────────────────────────
+    allocationBanner: {
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      backgroundColor: theme.surfaceMuted,
+      padding: 14,
+      marginBottom: 16,
+      gap: 10,
+    },
+    allocationBannerText: {
+      fontSize: 18,
+      fontWeight: '800' as const,
+      color: theme.text,
+    },
+    allocationBannerMeta: {
+      fontSize: 11,
+      color: theme.textMuted,
+    },
+    allocationProgressBar: {
+      height: 8,
+      borderRadius: 999,
+      backgroundColor: theme.progressTrack,
+      overflow: 'hidden' as const,
+      marginTop: 4,
+    },
+    allocationProgressFill: {
+      height: '100%' as const,
+      borderRadius: 999,
+    },
+
+    // ── Budget guide grid (50/30/20) ──────────────────────────────────────
+    budgetGuideGrid: {
+      flexDirection: 'row' as const,
+      gap: 10,
+      marginBottom: 8,
+    },
+    budgetGuideCard2: {
+      flex: 1,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      borderLeftWidth: 4,
+      backgroundColor: theme.surfaceMuted,
+      padding: 14,
+      gap: 4,
+    },
+    budgetGuideCard2Emoji: {
+      fontSize: 22,
+    },
+    budgetGuideCard2Percent: {
+      fontSize: 18,
+      fontWeight: '900' as const,
+      color: theme.text,
+    },
+    budgetGuideCard2Label: {
+      fontSize: 11,
+      fontWeight: '700' as const,
+      color: theme.textMuted,
+    },
+    budgetGuideCard2Amount: {
+      fontSize: 15,
+      fontWeight: '800' as const,
+      color: theme.text,
     },
   });

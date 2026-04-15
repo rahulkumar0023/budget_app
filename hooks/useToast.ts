@@ -10,8 +10,12 @@ type ShowToastInput =
       tone?: AppToastTone;
     };
 
+type ToastState = AppToastState & {
+  durationMs: number;
+};
+
 export function useToast() {
-  const [toast, setToast] = useState<AppToastState | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
     if (!toast) {
@@ -20,7 +24,7 @@ export function useToast() {
 
     const timeout = setTimeout(() => {
       setToast((current) => (current?.id === toast.id ? null : current));
-    }, 3200);
+    }, toast.durationMs);
 
     return () => clearTimeout(timeout);
   }, [toast]);
@@ -29,28 +33,18 @@ export function useToast() {
     () => ({
       hideToast: () => setToast(null),
       showToast: (input: ShowToastInput) => {
-        const nextInput =
-          typeof input === 'string'
-            ? { message: input, tone: 'info' as AppToastTone, durationMs: 3200 }
-            : {
-                durationMs: input.durationMs ?? 3200,
-                message: input.message,
-                tone: input.tone ?? 'info',
-              };
+        const durationMs =
+          typeof input === 'string' ? 3200 : (input.durationMs ?? 3200);
+        const tone =
+          typeof input === 'string' ? ('info' as AppToastTone) : (input.tone ?? 'info');
+        const message = typeof input === 'string' ? input : input.message;
 
-        const nextToast: AppToastState = {
+        setToast({
           id: Date.now(),
-          message: nextInput.message,
-          tone: nextInput.tone,
-        };
-
-        setToast(nextToast);
-
-        if (nextInput.durationMs !== 3200) {
-          setTimeout(() => {
-            setToast((current) => (current?.id === nextToast.id ? null : current));
-          }, nextInput.durationMs);
-        }
+          message,
+          tone,
+          durationMs,
+        });
       },
       toast,
     }),

@@ -4,10 +4,10 @@ export const getTheme = (themeId: AppThemeId) => appThemes[themeId] || appThemes
 
 export const commonStyles = {
   borderRadius: {
-    small: 8,
-    medium: 12,
-    large: 16,
-    extraLarge: 20,
+    small: 12,
+    medium: 18,
+    large: 24,
+    extraLarge: 32,
     full: 999,
   },
   spacing: {
@@ -16,5 +16,22 @@ export const commonStyles = {
     md: 12,
     lg: 16,
     xl: 24,
+    xxl: 32,
   },
+  shadows: {
+    soft: {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.05,
+      shadowRadius: 10,
+      elevation: 2,
+    },
+    medium: {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.1,
+      shadowRadius: 15,
+      elevation: 5,
+    },
+  }
 };

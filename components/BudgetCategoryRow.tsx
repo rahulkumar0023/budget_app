@@ -1,5 +1,5 @@
-import { memo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { memo, useRef } from 'react';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
 type Palette = {
   surface: string;
@@ -57,6 +57,26 @@ export const BudgetCategoryRow = memo(function BudgetCategoryRow({
   onOpen,
   onAdd,
 }: Props) {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.spring(scale, {
+      toValue: 0.78,
+      useNativeDriver: true,
+      speed: 40,
+      bounciness: 4,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scale, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 20,
+      bounciness: 14,
+    }).start();
+  };
+
   return (
     <Pressable
       style={[
@@ -86,15 +106,19 @@ export const BudgetCategoryRow = memo(function BudgetCategoryRow({
         </View>
 
         <View style={styles.headerSide}>
-          <Pressable
-            style={[styles.quickAddButton, { backgroundColor: palette.accentSoft }]}
-            onPress={(event) => {
-              event.stopPropagation();
-              onAdd();
-            }}
-          >
-            <Text style={[styles.quickAddButtonText, { color: palette.accentText }]}>+</Text>
-          </Pressable>
+          <Animated.View style={{ transform: [{ scale }] }}>
+            <Pressable
+              style={[styles.quickAddButton, { backgroundColor: palette.accentSoft }]}
+              onPressIn={handlePressIn}
+              onPressOut={handlePressOut}
+              onPress={(event) => {
+                event.stopPropagation();
+                onAdd();
+              }}
+            >
+              <Text style={[styles.quickAddButtonText, { color: palette.accentText }]}>+</Text>
+            </Pressable>
+          </Animated.View>
 
           <View style={styles.amountBlock}>
             <Text

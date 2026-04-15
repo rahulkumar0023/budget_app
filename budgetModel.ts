@@ -777,35 +777,116 @@ export const getMonogram = (name: string) =>
     .map((part) => part[0]?.toUpperCase() ?? '')
     .join('');
 
+export const categoryGlyphs = {
+  bag: '👜',
+  baby: '👶',
+  book: '📚',
+  car: '🚗',
+  cart: '🛒',
+  cup: '☕',
+  dot: '•',
+  fuel: '⛽',
+  game: '🎮',
+  gift: '🎁',
+  gym: '🏋️',
+  heart: '❤️',
+  home: '🏠',
+  invest: '📈',
+  movie: '🎬',
+  music: '🎵',
+  pet: '🐾',
+  plane: '✈️',
+  plus: '💊',
+  repeat: '🔄',
+  savings: '💰',
+  wifi: '📱',
+} as const;
+
 export const getCategoryGlyph = (name: string) => {
   const normalized = name.trim().toLowerCase();
 
-  if (/(grocery|food|market|farm|produce)/.test(normalized)) {
+  if (/(grocery|food|market|farm|produce|supermarket)/.test(normalized)) {
     return 'cart';
   }
 
-  if (/(transport|fuel|train|bus|car|travel)/.test(normalized)) {
-    return 'car';
-  }
-
-  if (/(rent|mortgage|home|house|utilities)/.test(normalized)) {
+  if (/(rent|mortgage|home|house|utilities|electric|water|gas bill|household)/.test(normalized)) {
     return 'home';
   }
 
-  if (/(coffee|dining|restaurant|snack|bar)/.test(normalized)) {
+  if (/(fuel|petrol|diesel)/.test(normalized)) {
+    return 'fuel';
+  }
+
+  if (/(transport|train|bus|car|uber|taxi|metro|commute|parking)/.test(normalized)) {
+    return 'car';
+  }
+
+  if (/(flight|travel|holiday|vacation|trip|airport|hotel)/.test(normalized)) {
+    return 'plane';
+  }
+
+  if (/(coffee|dining|restaurant|snack|bar|eat out|takeaway|takeout|lunch|dinner|brunch)/.test(normalized)) {
     return 'cup';
   }
 
-  if (/(subscription|stream|phone|tech|internet)/.test(normalized)) {
+  if (/(subscription|stream|netflix|spotify|phone|tech|internet|software)/.test(normalized)) {
     return 'wifi';
   }
 
-  if (/(health|pharmacy|doctor|wellness|gym)/.test(normalized)) {
+  if (/(music|concert|gig|festival)/.test(normalized)) {
+    return 'music';
+  }
+
+  if (/(movie|cinema|theatre|show|entertainment)/.test(normalized)) {
+    return 'movie';
+  }
+
+  if (/(game|gaming|console|esport)/.test(normalized)) {
+    return 'game';
+  }
+
+  if (/(gym|fitness|sport|yoga|pilates|swim|run|workout)/.test(normalized)) {
+    return 'gym';
+  }
+
+  if (/(health|pharmacy|doctor|medical|dentist|hospital|clinic|medicine|supplement|vitamin|wellness)/.test(normalized)) {
+    return 'heart';
+  }
+
+  if (/(shopping|clothes|fashion|style|apparel|footwear|accessories)/.test(normalized)) {
+    return 'bag';
+  }
+
+  if (/(gift|present|donation|charity)/.test(normalized)) {
+    return 'gift';
+  }
+
+  if (/(book|course|education|school|tuition|study|class|learn)/.test(normalized)) {
+    return 'book';
+  }
+
+  if (/(pet|dog|cat|vet|animal)/.test(normalized)) {
+    return 'pet';
+  }
+
+  if (/(baby|child|kid|childcare|nursery|nappy|diaper)/.test(normalized)) {
+    return 'baby';
+  }
+
+  if (/(invest|stock|fund|brokerage|crypto|etf|isa|pension|retire)/.test(normalized)) {
+    return 'invest';
+  }
+
+  if (/(save|saving|emergency|deposit|reserve)/.test(normalized)) {
+    return 'savings';
+  }
+
+  if (/(health|pharmacy|doctor|wellness|gym|medicine|pill|prescription)/.test(normalized)) {
     return 'plus';
   }
 
-  if (/(shopping|clothes|style|gift)/.test(normalized)) {
-    return 'bag';
+  if (/(recurring|bills?|fixed costs?|monthly charges?|regular payments?)/.test(normalized)) {
+    return 'repeat';
   }
 
   return 'dot';

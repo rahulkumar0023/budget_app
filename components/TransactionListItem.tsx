@@ -40,6 +40,7 @@ type Props = {
   palette: Palette;
   onEdit: () => void;
   onDelete: () => void;
+  onQuickLog?: () => void;
 };
 
 export const TransactionListItem = memo(function TransactionListItem({
@@ -58,6 +59,7 @@ export const TransactionListItem = memo(function TransactionListItem({
   palette,
   onEdit,
   onDelete,
+  onQuickLog,
 }: Props) {
   const toneBackground =
     tone === 'good'
@@ -138,6 +140,20 @@ export const TransactionListItem = memo(function TransactionListItem({
       </View>
 
       <View style={[styles.swipeRail, { width: swipeRailWidth }]}>
+        {onQuickLog ? (
+          <Pressable
+            style={[
+              styles.swipeRailButton,
+              {
+                backgroundColor: palette.successSurface,
+                borderColor: palette.successText,
+              },
+            ]}
+            onPress={onQuickLog}
+          >
+            <Text style={[styles.swipeRailButtonTextPrimary, { color: palette.successText }]}>⚡ Again</Text>
+          </Pressable>
+        ) : null}
         <Pressable
           style={[
             styles.swipeRailButton,

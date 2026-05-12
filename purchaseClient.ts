@@ -53,7 +53,7 @@ const getUnavailableMessage = () => {
     return 'Subscriptions are available on iPhone only right now.';
   }
 
-  return 'Subscriptions are not ready in this build yet.';
+  return 'Premium is unavailable right now.';
 };
 
 const canUseRevenueCat = Platform.OS === 'ios' && Boolean(iosApiKey);
@@ -321,7 +321,7 @@ export const purchasePremiumPackage = async (packageId: string) => {
   const revenueCatPackage = packageCache.get(packageId);
 
   if (!revenueCatPackage) {
-    throw new Error('Premium offering is not ready yet.');
+    throw new Error('Premium is unavailable right now.');
   }
 
   const result = await Purchases.purchasePackage(revenueCatPackage);

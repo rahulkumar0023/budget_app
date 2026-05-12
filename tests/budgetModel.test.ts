@@ -111,7 +111,7 @@ test('ensureCurrentMonth rolls recurring categories and transactions into the ne
     accounts: [],
     goals: [],
     preferences: {
-      appThemeId: 'lagoon',
+      appThemeId: 'indigo',
       cloudBackupEnabled: false,
       currencyCode: 'EUR',
       languageCode: 'en',

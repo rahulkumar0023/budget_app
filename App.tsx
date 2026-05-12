@@ -2591,14 +2591,14 @@ export default function App() {
         : 'Free plan';
   const friendlyPurchaseError =
     purchaseSnapshot.lastError?.includes('EXPO_PUBLIC_REVENUECAT_IOS_API_KEY')
-      ? 'Subscriptions are not ready in this build yet.'
+      ? 'Premium is unavailable right now.'
       : purchaseSnapshot.lastError;
   const premiumStatusMeta =
     purchaseState === 'error'
-      ? friendlyPurchaseError ?? 'Subscriptions are not ready yet.'
+      ? friendlyPurchaseError ?? 'Premium is unavailable right now.'
       : hasPremiumAccess
-        ? 'AI tools and recovery backup are ready when you want them.'
-        : 'Core budgeting stays free. Premium adds AI help and optional reinstall recovery.';
+        ? 'Smart tools and recovery backup are ready when you want them.'
+        : 'Core budgeting stays free. Premium adds smart help and optional reinstall recovery.';
   const authEmailNormalized = authEmail.trim().toLowerCase();
   const authStatusIsError =
     /could not|did not|enter |at least 6|must match|failed|too many|not enabled|invalid|network/i.test(
@@ -2645,8 +2645,6 @@ export default function App() {
     { id: 'overview', label: 'Overview' },
     { id: 'appearance', label: 'Look' },
     { id: 'locale', label: 'Locale' },
-    { id: 'accounts', label: 'Accounts' },
-    { id: 'cloud', label: 'Recovery' },
     { id: 'data', label: 'Data' },
   ];
 
@@ -2748,7 +2746,7 @@ export default function App() {
 
   const purchasePremiumAccess = async (selectedPackage: PremiumPackageOption | null) => {
     if (!selectedPackage) {
-      setPaywallStatus('Premium packages are not ready yet. Finish the RevenueCat setup and try again.');
+      setPaywallStatus('Premium is unavailable right now. Core budgeting still works locally.');
       return;
     }
 
@@ -3672,7 +3670,7 @@ export default function App() {
       const review = await getBudgetAiMonthlyReview(aiReviewPayload);
 
       if (!review) {
-        throw new Error('No AI review returned.');
+        throw new Error('No monthly check-in returned.');
       }
 
       setAiReviewByMonthId((current) => ({
@@ -3699,12 +3697,12 @@ export default function App() {
     }
 
     if (activeMonth.categories.length === 0) {
-      setExpenseAiError('Add at least one category before asking AI to classify an expense.');
+      setExpenseAiError('Add at least one category before asking for a smart match.');
       return;
     }
 
     if (!expenseAiAssistPayload.note) {
-      setExpenseAiError('Add a note first so AI has something to classify.');
+      setExpenseAiError('Add a note first so smart match has something to use.');
       return;
     }
 
@@ -3724,7 +3722,7 @@ export default function App() {
       const suggestion = await getBudgetAiExpenseAssist(expenseAiAssistPayload);
 
       if (!suggestion) {
-        throw new Error('No AI expense suggestion returned.');
+        throw new Error('No smart match returned.');
       }
 
       setExpenseAiSuggestion({
@@ -3799,7 +3797,7 @@ export default function App() {
     if (monthlyLimitNumber <= 0) {
       setMonthPlannerErrorByMonthId((current) => ({
         ...current,
-        [activeMonth.id]: 'Set the month amount first so AI can size the starter plan.',
+        [activeMonth.id]: 'Set the month amount first so starter hints can size the plan.',
       }));
       return;
     }
@@ -3807,7 +3805,7 @@ export default function App() {
     if (aiMonthPlannerPayload.historyCategories.length === 0) {
       setMonthPlannerErrorByMonthId((current) => ({
         ...current,
-        [activeMonth.id]: 'Track at least one earlier month before asking AI for a starter plan.',
+        [activeMonth.id]: 'Track at least one earlier month before asking for starter hints.',
       }));
       return;
     }
@@ -3826,7 +3824,7 @@ export default function App() {
       const planner = await getBudgetAiMonthPlanner(aiMonthPlannerPayload);
 
       if (!planner) {
-        throw new Error('No AI month planner returned.');
+        throw new Error('No starter hints returned.');
       }
 
       setMonthPlannerByMonthId((current) => ({
@@ -5186,9 +5184,9 @@ export default function App() {
                 </View>
               ) : (
                 <View style={styles.emptyStateCompact}>
-                  <Text style={styles.emptyTitle}>Premium packages not ready</Text>
+                  <Text style={styles.emptyTitle}>Premium unavailable</Text>
                   <Text style={styles.emptyText}>
-                    Premium offers are not available in this build yet. Reopen this screen when subscriptions are connected.
+                    Core budgeting is still free and local. Premium can be restored or started when offers are available.
                   </Text>
                 </View>
               )}
@@ -5210,7 +5208,7 @@ export default function App() {
               </View>
 
               <Text style={styles.selectorHint}>
-                Billing is handled by Apple. Premium covers AI check-ins, smart helpers, and optional recovery backup.
+                Billing is handled by Apple. Premium covers monthly check-ins, smart helpers, and optional recovery backup.
               </Text>
 
               {purchaseState === 'error' && friendlyPurchaseError ? (
@@ -6135,8 +6133,8 @@ export default function App() {
                 <>
                   <View style={styles.budgetStageLead}>
                     <View style={styles.sectionHeaderCopy}>
-                      <Text style={styles.heroTitle}>Build this month</Text>
-                      <Text style={styles.heroSubtitle}>{budgetHeroSupportLabel}</Text>
+                      <Text style={styles.heroTitle}>Start this month</Text>
+                      <Text style={styles.heroSubtitle}>Set the amount. Add a few lanes. Start logging.</Text>
                     </View>
                   </View>
 
@@ -6154,12 +6152,9 @@ export default function App() {
                         selectionColor={currentTheme.accent}
                       />
                     </View>
-                    <Text style={styles.heroOrbitMeta}>
-                      Keep it broad: amount first, then a few lanes like rent, groceries, and transport.
-                    </Text>
                   </View>
 
-                  <View style={styles.chipWrap}>
+                  <View style={styles.compactHighlightRow}>
                     {quickStartPresets.slice(0, 3).map((preset) => (
                       <View key={preset.name} style={styles.compactHighlightChip}>
                         <Text style={styles.compactHighlightText}>
@@ -6185,17 +6180,7 @@ export default function App() {
                           </Text>
                         </Pressable>
                       ) : null}
-                      <Pressable style={styles.ghostButton} onPress={openPlanCategories}>
-                        <Text style={styles.ghostButtonText}>Open plan</Text>
-                      </Pressable>
                     </View>
-                  </View>
-
-                  <View style={styles.heroNoteCard}>
-                    <Text style={styles.heroNoteTitle}>Keep it easy</Text>
-                    <Text style={styles.heroNoteBody}>
-                      You only need a month amount and a few starter lanes to get going.
-                    </Text>
                   </View>
                 </>
               )}
@@ -6745,7 +6730,7 @@ export default function App() {
                 {monthlyLimitNumber > 0 ? (
                   <>
                     <Text style={[styles.fieldLabel, { marginTop: 16, marginBottom: 10 }]}>
-                      Start with essentials ✨
+                      Start with essentials
                     </Text>
                     <View style={styles.presetTileGrid}>
                       {quickStartPresets.map((preset) => {
@@ -6779,7 +6764,7 @@ export default function App() {
                     style={[styles.primaryButton, monthlyLimitNumber <= 0 && styles.buttonDisabled]}
                     onPress={startBudgetSetup}
                   >
-                    <Text style={styles.primaryButtonText}>Start budget →</Text>
+                    <Text style={styles.primaryButtonText}>Start budget</Text>
                   </Pressable>
 
                   {monthlyLimitNumber > 0 ? (

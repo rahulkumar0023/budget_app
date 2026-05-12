@@ -2,6 +2,15 @@
 
 A simple Expo React Native app to track monthly budgets by category.
 
+## App identity
+
+- App name: `Budget Buddy`
+- Expo slug: `budget-buddy`
+- Expo owner: `rahul0083.be`
+- iOS bundle ID: `com.rahulkumar.budgetbuddy`
+- Android package: `com.rahulkumar.budgetbuddy`
+- URL scheme: `budgetbuddy`
+
 ## Features
 
 - Set a monthly budget limit.
@@ -20,7 +29,7 @@ A simple Expo React Native app to track monthly budgets by category.
 2. Start Expo:
 
    ```bash
-   
+   npm run start
    ```
 
 3. Open on iOS/Android simulator or the Expo Go app.
@@ -29,6 +38,14 @@ A simple Expo React Native app to track monthly budgets by category.
 
 ```bash
 npm run typecheck
+```
+
+## Local release checks
+
+```bash
+npx expo-doctor
+npx expo export --platform ios --output-dir .expo-export-ios-check
+rm -rf .expo-export-ios-check
 ```
 
 ## Account and backup
@@ -77,6 +94,6 @@ Before App Store submission, still make sure you have:
 
 Helpful launch docs:
 
-- [APP_STORE_METADATA.md](/Users/rahulkumar/StudioProjects/budget_app/APP_STORE_METADATA.md)
-- [PRIVACY.md](/Users/rahulkumar/StudioProjects/budget_app/PRIVACY.md)
-- [SUPPORT.md](/Users/rahulkumar/StudioProjects/budget_app/SUPPORT.md)
+- [APP_STORE_METADATA.md](./APP_STORE_METADATA.md)
+- [PRIVACY.md](./PRIVACY.md)
+- [SUPPORT.md](./SUPPORT.md)

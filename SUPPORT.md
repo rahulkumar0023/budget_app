@@ -3,13 +3,13 @@
 ## Common help
 
 - `My budget is gone after reinstall`
-  - Reinstall recovery only works when Firebase backup was enabled and tied to a signed-in Premium account.
-- `AI review is locked`
-  - AI features are part of Budget Buddy Premium.
+  - Reinstall recovery only works when recovery backup was enabled and tied to a signed-in Premium account.
+- `Monthly check-in is locked`
+  - Smart check-ins are part of Budget Buddy Premium.
 - `My purchase did not unlock`
   - Open `Settings > Account` and use `Restore purchases`.
 - `Backup will not turn on`
-  - Firebase backup needs both Premium and a signed-in account.
+  - Recovery backup needs both Premium and a signed-in account.
 
 ## Recommended troubleshooting
 

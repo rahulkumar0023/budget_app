@@ -1,4 +1,6 @@
 node_modules/
 .expo/
+dist/
+.expo-export-test/
 .DS_Store
 npm-debug.log*

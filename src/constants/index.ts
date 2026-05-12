@@ -58,7 +58,7 @@ export const paywallSourceMeta = {
   },
   settings_upgrade: {
     title: 'Upgrade to Budget Buddy Premium',
-    subtitle: 'Unlock AI budgeting help and optional recovery backup without changing the local-first core app.',
+    subtitle: 'Unlock smarter budgeting help and optional recovery backup without changing the local-first core app.',
   },
   setup_complete: {
     title: 'Keep the budget working harder for you',

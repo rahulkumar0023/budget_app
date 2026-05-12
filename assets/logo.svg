@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 300" role="img" aria-label="Budget Buddy logo">
+  <rect x="24" y="28" width="244" height="244" rx="58" fill="#F6F1EA"/>
+  <rect x="72" y="72" width="148" height="156" rx="34" fill="#FFFFFF"/>
+  <text x="146" y="178" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="88" font-weight="900" fill="#23443B">BB</text>
+  <rect x="92" y="194" width="108" height="12" rx="6" fill="#F5B64C"/>
+  <text x="315" y="140" font-family="Inter, Arial, sans-serif" font-size="76" font-weight="800" fill="#1C332D">Budget Buddy</text>
+  <text x="319" y="214" font-family="Inter, Arial, sans-serif" font-size="48" font-weight="700" fill="#5F756C">Mobile</text>
+</svg>

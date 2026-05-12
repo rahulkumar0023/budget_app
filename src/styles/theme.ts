@@ -1,6 +1,6 @@
 import { appThemes, type AppThemeId } from '../../budgetModel';
 
-export const getTheme = (themeId: AppThemeId) => appThemes[themeId] || appThemes.sunrise;
+export const getTheme = (themeId: AppThemeId) => appThemes[themeId] || appThemes.indigo;
 
 export const commonStyles = {
   borderRadius: {

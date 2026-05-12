@@ -3,7 +3,12 @@
 ## App identity
 
 - App name: `Budget Buddy`
+- Expo slug: `budget-buddy`
+- Expo owner: `rahul0083.be`
 - Bundle identifier: `com.rahulkumar.budgetbuddy`
+- Android package: `com.rahulkumar.budgetbuddy`
+- URL scheme: `budgetbuddy`
+- SKU: `com.rahulkumar.budgetbuddy`
 - Primary category: `Finance`
 - Pricing model: `Free`
 
@@ -21,11 +26,11 @@ The core app stays free and local-first. You can create budgets, add categories 
 
 Budget Buddy Premium unlocks:
 
-- AI monthly reviews that separate fixed recurring costs from adjustable spend
-- AI expense suggestions for category, bank account, and repeat flag
-- AI cleanup review for imported budgets
-- AI starter-plan suggestions from your prior months
-- optional Firebase backup and reinstall recovery
+- Monthly check-ins that separate fixed recurring costs from adjustable spend
+- Smart expense suggestions for category, bank account, and repeat flag
+- Smart tidy-up for imported budgets
+- Starter-plan suggestions from your prior months
+- Optional recovery backup after reinstall
 
 ## Subscription setup
 
@@ -39,13 +44,34 @@ Budget Buddy Premium unlocks:
 
 ## RevenueCat and App Store Connect checklist
 
-1. Create the app in App Store Connect with bundle ID `com.rahulkumar.budgetbuddy`.
-2. Add the app as `Free`.
-3. Create the `Premium` subscription group.
-4. Create `premium_monthly` and `premium_yearly`.
-5. Add the matching products to RevenueCat.
-6. Create the `premium` entitlement in RevenueCat.
-7. Attach the monthly and yearly products to the current offering.
-8. Add the public iOS SDK key to local env and EAS env as `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY`.
-9. Point App Store Connect support/privacy URLs to hosted versions of [SUPPORT.md](/Users/rahulkumar/StudioProjects/budget_app/SUPPORT.md) and [PRIVACY.md](/Users/rahulkumar/StudioProjects/budget_app/PRIVACY.md).
-10. Upload final icon, screenshots, and promotional art before submission.
+1. Register the Apple Developer App ID with bundle ID `com.rahulkumar.budgetbuddy`.
+2. Enable Push Notifications only if the app adds push messaging later.
+3. Create the app in App Store Connect with name `Budget Buddy`, bundle ID `com.rahulkumar.budgetbuddy`, and SKU `com.rahulkumar.budgetbuddy`.
+4. Add the app as `Free`.
+5. Create the `Premium` subscription group.
+6. Create `premium_monthly` and `premium_yearly`.
+7. Add the matching products to RevenueCat.
+8. Create the `premium` entitlement in RevenueCat.
+9. Attach the monthly and yearly products to the current offering.
+10. Add the public iOS SDK key to local env and EAS env as `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY`.
+11. Point App Store Connect support/privacy URLs to hosted versions of [SUPPORT.md](./SUPPORT.md) and [PRIVACY.md](./PRIVACY.md).
+12. Upload final icon, screenshots, and promotional art before submission.
+
+## Build and submit commands
+
+```bash
+npm exec --yes --cache /tmp/npm-cache-eas-build -- eas-cli build --platform ios --profile production --clear-cache
+```
+
+```bash
+npm exec --yes --cache /tmp/npm-cache-eas-submit -- eas-cli submit --platform ios --profile production --latest --wait --verbose
+```
+
+## Local release checks
+
+```bash
+npm run typecheck
+npx expo-doctor
+npx expo export --platform ios --output-dir .expo-export-ios-check
+rm -rf .expo-export-ios-check
+```

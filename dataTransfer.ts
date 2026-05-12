@@ -165,7 +165,7 @@ const normalizeThemeId = (value: unknown, fallback: ThemeId): ThemeId =>
     ? (value as ThemeId)
     : fallback;
 
-const normalizeAppThemeId = (value: unknown, fallback: AppThemeId = 'sunrise'): AppThemeId =>
+const normalizeAppThemeId = (value: unknown, fallback: AppThemeId = 'indigo'): AppThemeId =>
   typeof value === 'string' && value in appThemes ? (value as AppThemeId) : fallback;
 
 const escapeCsvCell = (value: string) =>
@@ -518,7 +518,7 @@ export const importLedgerCsv = (csv: string, referenceDate = new Date()) => {
     accounts,
     [],
     {
-      appThemeId: 'sunrise',
+      appThemeId: 'indigo',
       cloudBackupEnabled: false,
       currencyCode: defaultCurrencyCode,
       languageCode: defaultLanguageCode,
@@ -769,7 +769,7 @@ export const importWorkbookBase64 = (base64: string, referenceDate = new Date())
     preferencesRow && typeof preferencesRow.activeMonthId === 'string'
       ? preferencesRow.activeMonthId
       : undefined;
-  const appThemeId = preferencesRow ? normalizeAppThemeId(preferencesRow.appThemeId) : 'sunrise';
+  const appThemeId = preferencesRow ? normalizeAppThemeId(preferencesRow.appThemeId) : 'indigo';
   const cloudBackupEnabled =
     preferencesRow && typeof preferencesRow.cloudBackupEnabled === 'boolean'
       ? preferencesRow.cloudBackupEnabled
@@ -1152,7 +1152,7 @@ export const importISaveMoneyPdfText = (text: string, referenceDate = new Date()
     new Map<string, BankAccount>(),
     [],
     {
-      appThemeId: 'sunrise',
+      appThemeId: 'indigo',
       cloudBackupEnabled: false,
       currencyCode: defaultCurrencyCode,
       languageCode: defaultLanguageCode,

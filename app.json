@@ -2,11 +2,18 @@
   "expo": {
     "name": "Budget Buddy",
     "slug": "budget-buddy",
-    "description": "Local-first budget planning with optional AI reviews and recoverable backup.",
+    "owner": "rahul0083.be",
+    "description": "Local-first budget planning with smart monthly reviews and recoverable backup.",
     "version": "1.0.0",
     "scheme": "budgetbuddy",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F6F1EA"
+    },
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -21,7 +28,28 @@
       "bundleIdentifier": "com.rahulkumar.budgetbuddy",
       "buildNumber": "1",
       "infoPlist": {
+        "LSApplicationCategoryType": "public.app-category.finance",
         "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.rahulkumar.budgetbuddy",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "backgroundColor": "#F6F1EA"
+      }
+    },
+    "notification": {
+      "icon": "./assets/notification-icon.png",
+      "color": "#23443B"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "release": {
+        "supportUrlRequired": true,
+        "privacyPolicyUrlRequired": true
       }
     },
     "plugins": [

@@ -6,6 +6,10 @@ export const AnimatedBackground: React.FC = () => {
   const { theme } = useTheme();
   const { height } = useWindowDimensions();
 
+  // Detect if theme is light based on background color
+  const isLightTheme = theme.background === '#FFFFFF' || theme.background.toLowerCase() === '#ffffff';
+  const orbOpacity = isLightTheme ? 0.08 : 0.5;  // Much lower opacity for light themes
+
   const move1 = useRef(new Animated.Value(0)).current;
   const move2 = useRef(new Animated.Value(0)).current;
   const move3 = useRef(new Animated.Value(0)).current;

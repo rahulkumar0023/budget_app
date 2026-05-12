@@ -549,3 +549,73 @@ export const loadBudgetCloudState = async (userId: string): Promise<unknown | nu
 export const saveBudgetCloudState = async (userId: string, state: BudgetAppState) => {
   await setDoc(doc(firestore, 'users', userId, 'budget', 'app'), state, { merge: false });
 };
+
+export type UserProfile = {
+  uid: string;
+  email: string;
+  displayName: string;
+  createdAt: number;
+};
+
+export const createUserProfile = async (
+  uid: string,
+  email: string,
+  displayName: string,
+): Promise<void> => {
+  const normalizedEmail = email.trim().toLowerCase();
+  const profile: UserProfile = {
+    uid,
+    email: normalizedEmail,
+    displayName: displayName.trim(),
+    createdAt: Date.now(),
+  };
+
+  await Promise.all([
+    setDoc(doc(firestore, 'users', uid, 'profile', 'info'), profile),
+    setDoc(doc(firestore, 'userIndex', normalizedEmail), { uid }),
+  ]);
+};
+
+export const getUserProfileByEmail = async (email: string): Promise<UserProfile | null> => {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    const indexSnapshot = await getDoc(doc(firestore, 'userIndex', normalizedEmail));
+
+    if (!indexSnapshot.exists()) {
+      return null;
+    }
+
+    const { uid } = indexSnapshot.data() as { uid: string };
+    const profileSnapshot = await getDoc(doc(firestore, 'users', uid, 'profile', 'info'));
+
+    if (!profileSnapshot.exists()) {
+      return null;
+    }
+
+    return profileSnapshot.data() as UserProfile;
+  } catch {
+    return null;
+  }
+};
+
+export const getCurrentUserProfile = async (): Promise<UserProfile | null> => {
+  const auth = getBudgetAuth();
+  const user = auth.currentUser;
+
+  if (!user?.email) {
+    return null;
+  }
+
+  try {
+    const snapshot = await getDoc(doc(firestore, 'users', user.uid, 'profile', 'info'));
+
+    if (!snapshot.exists()) {
+      return null;
+    }
+
+    return snapshot.data() as UserProfile;
+  } catch {
+    return null;
+  }
+};

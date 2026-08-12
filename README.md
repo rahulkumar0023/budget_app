@@ -19,9 +19,30 @@ Budget Buddy is a simple Expo React Native app to help users track monthly budge
 - Monthly summary and simple charts
 - Optional Firebase backup and authentication
 
-## Architecture & Documentation
+## Architecture
 
-See [**Diagrams**](./docs/DIAGRAMS.md) for visual guides to the app architecture and budget workflow.
+### App Structure
+
+![Architecture Diagram](./docs/diagrams/architecture.svg)
+
+The app is built in three layers:
+- **UI**: React Native components (Dashboard, Categories, Transactions, Settings)
+- **Data**: Business logic and state management (Budgets, Transactions, Months)
+- **Storage**: Local AsyncStorage, optional Firebase backup, and RevenueCat subscriptions
+
+### Budget Workflow
+
+![Budget Workflow](./docs/diagrams/workflow.svg)
+
+Users follow this monthly cycle:
+1. Set a budget limit for the month
+2. Create budget categories (Needs, Wants, Savings)
+3. Log daily expenses
+4. Review spending patterns
+5. Adjust if overspending
+6. Roll over to next month
+
+See [**full documentation**](./docs/DIAGRAMS.md) for more details.
 
 ## Getting started
 

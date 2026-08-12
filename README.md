@@ -1,82 +1,84 @@
 # Budget Buddy (Mobile App)
 
-A simple Expo React Native app to track monthly budgets by category.
+Budget Buddy is a simple Expo React Native app to help users track monthly budgets by category.
 
 ## Features
 
-- Set a monthly budget limit.
-- View planned, spent, and remaining totals.
-- Add custom budget categories.
-- See remaining budget per category.
+- Set a monthly budget limit per category
+- Add, edit and remove expense entries
+- View planned, spent, and remaining totals per category
+- Monthly summary and simple charts
+- Optional Firebase backup and authentication
 
-## Run locally
+## Getting started
 
-1. Install dependencies:
+Prerequisites:
 
-   ```bash
-   npm install
-   ```
+- Node.js 18+ and npm
+- Expo CLI (optional but recommended): `npm install -g expo-cli`
 
-2. Start Expo:
-
-   ```bash
-   
-   ```
-
-3. Open on iOS/Android simulator or the Expo Go app.
-
-## Type checking
+Install dependencies:
 
 ```bash
-npm run typecheck
+npm install
 ```
 
-## Account and backup
-
-- The app is local-first by default.
-- Firebase backup is optional and should be enabled only when the user wants reinstall or cross-device recovery.
-- Email/password login lives in Firebase Auth.
-- Firebase backup is a Premium feature and only runs when the user is signed in and backup is turned on.
-
-## Premium setup
-
-Budget Buddy uses RevenueCat for iOS subscriptions.
-
-- Entitlement: `premium`
-- Products:
-  - `premium_monthly`
-  - `premium_yearly`
-- Public iOS SDK key env var:
-  - `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY`
-
-Local example:
+Run the app in development (Expo managed workflow):
 
 ```bash
-EXPO_PUBLIC_REVENUECAT_IOS_API_KEY=appl_your_public_sdk_key npm run start
+npm start
+# or
+expo start
 ```
 
-For EAS production builds, add the same env var in EAS secrets or environment settings before building.
+Open the app using Expo Go on your device or run on a simulator.
 
-## iOS release prep
+## Scripts
+
+- `npm start` — Start the Expo development server
+- `npm run android` — Run on Android emulator/device (if configured)
+- `npm run ios` — Run on iOS simulator (macOS only)
+- `npm run typecheck` — Run TypeScript type checks (if project uses TypeScript)
+
+## Configuration
+
+If using Firebase for optional backup and authentication, set these environment variables locally or in your build environment:
+
+- `FIREBASE_API_KEY`
+- `FIREBASE_AUTH_DOMAIN`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_STORAGE_BUCKET`
+- `FIREBASE_MESSAGING_SENDER_ID`
+- `FIREBASE_APP_ID`
+
+For RevenueCat (iOS subscriptions) set:
+
+- `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY`
+
+Local example (start with a public RevenueCat key):
+
+```bash
+EXPO_PUBLIC_REVENUECAT_IOS_API_KEY=appl_your_public_sdk_key npm start
+```
+
+## iOS release (example)
 
 ```bash
 npm run build:ios
-```
-
-```bash
 npm run submit:ios
 ```
 
-Before App Store submission, still make sure you have:
+Before submitting to the App Store, ensure:
 
-- App Store Connect app created as a free Finance app
-- RevenueCat products and entitlement mapped correctly
-- final app icon and screenshots
-- hosted support/privacy URLs ready for the store listing
-- App Store privacy details filled in inside App Store Connect
+- App Store Connect app created
+- RevenueCat products and entitlements configured
+- App icons and screenshots prepared
+- Privacy/support URLs and App Store privacy details provided
 
-Helpful launch docs:
+## Contributing
 
-- [APP_STORE_METADATA.md](/Users/rahulkumar/StudioProjects/budget_app/APP_STORE_METADATA.md)
-- [PRIVACY.md](/Users/rahulkumar/StudioProjects/budget_app/PRIVACY.md)
-- [SUPPORT.md](/Users/rahulkumar/StudioProjects/budget_app/SUPPORT.md)
+Contributions, bug reports and feature requests are welcome. Please open an issue or submit a PR.
+
+## License
+
+This project is provided under the MIT License. See LICENSE for details.

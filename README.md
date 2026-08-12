@@ -65,6 +65,8 @@ Budget Buddy uses RevenueCat for iOS subscriptions.
   - `premium_yearly`
 - Public iOS SDK key env var:
   - `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY`
+- Public Android SDK key env var, if Android subscriptions are enabled:
+  - `EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY`
 
 Local example:
 
@@ -72,7 +74,16 @@ Local example:
 EXPO_PUBLIC_REVENUECAT_IOS_API_KEY=appl_your_public_sdk_key npm run start
 ```
 
-For EAS production builds, add the same env var in EAS secrets or environment settings before building.
+Or create a local `.env` from [.env.example](./.env.example), then restart Expo with a clean cache:
+
+```bash
+cp .env.example .env
+npx expo start --clear
+```
+
+RevenueCat purchases require a development build, TestFlight/App Store build, or Android build with native IAP support. Expo Go cannot complete native in-app purchases.
+
+For EAS production builds, add the same env vars in EAS secrets or environment settings before building. The app includes a RevenueCat test key for development fallback only; production builds should use real app-specific SDK keys.
 
 ## iOS release prep
 

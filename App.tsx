@@ -13,6 +13,7 @@ import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
   type DimensionValue,
   FlatList,
   LayoutAnimation,
@@ -100,6 +101,7 @@ import {
 import { AppToast } from './components/AppToast';
 import { BudgetCategoryRow } from './components/BudgetCategoryRow';
 import { TransactionListItem } from './components/TransactionListItem';
+import { PremiumBadge } from './components/PremiumBadge';
 import ConfettiCannon from 'react-native-confetti-cannon';
 import { AnimatedBackground } from './src/components/layout/AnimatedBackground';
 import { triggerHaptic } from './src/utils/haptics';
@@ -1000,6 +1002,52 @@ const getAuthErrorMessage = (error: unknown) => {
     default:
       return 'The account action could not be completed.';
   }
+};
+
+type AnimatedPressableProps = {
+  onPress?: () => void;
+  style?: any;
+  children?: React.ReactNode;
+  scale?: number;
+  disabled?: boolean;
+};
+
+const AnimatedPressable: React.FC<AnimatedPressableProps> = ({
+  onPress,
+  style,
+  children,
+  scale = 0.97,
+  disabled = false,
+}) => {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const pressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: scale,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const pressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
+      disabled={disabled}
+      style={style}
+    >
+      <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+        {children}
+      </Animated.View>
+    </Pressable>
+  );
 };
 
 export default function App() {
@@ -2574,13 +2622,9 @@ export default function App() {
   const purchaseState = purchaseSnapshot.purchaseState;
   const hasPremiumAccess = premiumStatus === 'premium';
   const annualPremiumPackage =
-    purchaseSnapshot.packages.find((option) => option.kind === 'annual') ??
-    purchaseSnapshot.packages[0] ??
-    null;
+    purchaseSnapshot.packages.find((option) => option.kind === 'annual') ?? null;
   const monthlyPremiumPackage =
-    purchaseSnapshot.packages.find((option) => option.kind === 'monthly') ??
-    purchaseSnapshot.packages.find((option) => option.id !== annualPremiumPackage?.id) ??
-    null;
+    purchaseSnapshot.packages.find((option) => option.kind === 'monthly') ?? null;
   const cloudBackupEnabled = appState.preferences.cloudBackupEnabled;
   const shouldUseCloudBackup = cloudBackupEnabled && isSignedIn && hasPremiumAccess;
   const premiumStatusLabel =
@@ -2588,7 +2632,7 @@ export default function App() {
       ? 'Checking plan'
       : hasPremiumAccess
         ? 'Premium active'
-        : 'Free plan';
+        : 'Essential';
   const friendlyPurchaseError =
     purchaseSnapshot.lastError?.includes('EXPO_PUBLIC_REVENUECAT_IOS_API_KEY')
       ? 'Premium is unavailable right now.'
@@ -2598,7 +2642,7 @@ export default function App() {
       ? friendlyPurchaseError ?? 'Premium is unavailable right now.'
       : hasPremiumAccess
         ? 'Smart tools and recovery backup are ready when you want them.'
-        : 'Core budgeting stays free. Premium adds smart help and optional reinstall recovery.';
+        : 'Budget Buddy Essential is always yours. Premium adds AI insights and recovery backup.';
   const authEmailNormalized = authEmail.trim().toLowerCase();
   const authStatusIsError =
     /could not|did not|enter |at least 6|must match|failed|too many|not enabled|invalid|network/i.test(
@@ -2628,12 +2672,12 @@ export default function App() {
             : cloudState === 'synced'
               ? 'Backup is up to date.'
               : 'Backup is unavailable right now. Your local copy is still safe.';
-  const accountModeValue = isSignedIn ? 'Signed in' : 'Local only';
+  const accountModeValue = isSignedIn ? 'Signed in' : 'Personal';
   const accountModeMeta = isSignedIn
     ? authUser?.email ?? 'Signed in on this device.'
     : 'Everything is staying on this device right now.';
   const backupStateValue =
-    hasPremiumAccess && cloudBackupEnabled && isSignedIn ? 'Backup on' : 'Local only';
+    hasPremiumAccess && cloudBackupEnabled && isSignedIn ? 'Backup on' : 'Personal';
   const backupStateMeta = hasPremiumAccess
     ? isSignedIn
       ? cloudBackupEnabled
@@ -2746,7 +2790,7 @@ export default function App() {
 
   const purchasePremiumAccess = async (selectedPackage: PremiumPackageOption | null) => {
     if (!selectedPackage) {
-      setPaywallStatus('Premium is unavailable right now. Core budgeting still works locally.');
+      setPaywallStatus('Premium is unavailable right now. Budget Buddy Essential is always available.');
       return;
     }
 
@@ -4914,7 +4958,7 @@ export default function App() {
               >
                 <Text style={styles.tertiaryButtonText}>
                   {!hasPremiumAccess
-                    ? 'Unlock smart match'
+                    ? '🔒 Smart match'
                     : expenseAiBusy
                       ? 'Checking...'
                       : 'Smart match'}
@@ -5042,9 +5086,15 @@ export default function App() {
     }
 
     const isBusy = paywallBusyAction === premiumPackage.id;
+    const subscribeLabel =
+      premiumPackage.kind === 'annual'
+        ? 'Subscribe Yearly'
+        : premiumPackage.kind === 'monthly'
+          ? 'Subscribe Monthly'
+          : 'Subscribe';
 
     return (
-      <Pressable
+      <AnimatedPressable
         key={premiumPackage.id}
         style={[
           styles.paywallPlanCard,
@@ -5055,6 +5105,7 @@ export default function App() {
           void purchasePremiumAccess(premiumPackage);
         }}
         disabled={Boolean(paywallBusyAction)}
+        scale={0.97}
       >
         <View style={styles.paywallPlanHeader}>
           <View style={styles.paywallPlanCopy}>
@@ -5094,23 +5145,31 @@ export default function App() {
 
         <View style={[styles.paywallPlanButton, primary && styles.paywallPlanButtonPrimary]}>
           <Text style={[styles.paywallPlanButtonText, primary && styles.paywallPlanButtonTextPrimary]}>
-            {isBusy ? 'Working...' : primary ? 'Start yearly' : 'Choose monthly'}
+            {isBusy ? 'Working...' : subscribeLabel}
           </Text>
         </View>
-      </Pressable>
+      </AnimatedPressable>
     );
   };
 
   const renderPremiumPaywall = () => {
     const paywallMeta = paywallSourceMeta[paywallSource];
     const paywallFeatures = [
-      'Monthly check-ins with realistic next steps',
-      'Smarter expense suggestions',
-      'Smart tidy-up and starter hints',
-      'Recoverable backup after reinstall',
+      { emoji: '📊', text: 'Monthly check-ins with realistic next steps' },
+      { emoji: '✨', text: 'Smarter expense suggestions' },
+      { emoji: '🔍', text: 'Smart tidy-up and starter hints' },
+      { emoji: '☁️', text: 'Recoverable backup after reinstall' },
     ];
-    const secondaryPackage =
-      annualPremiumPackage?.id === monthlyPremiumPackage?.id ? null : monthlyPremiumPackage;
+    const extraPremiumPackages = purchaseSnapshot.packages.filter(
+      (premiumPackage) =>
+        premiumPackage.id !== annualPremiumPackage?.id &&
+        premiumPackage.id !== monthlyPremiumPackage?.id,
+    );
+    const paywallPackages = [
+      annualPremiumPackage,
+      monthlyPremiumPackage,
+      ...extraPremiumPackages,
+    ].filter((premiumPackage): premiumPackage is PremiumPackageOption => Boolean(premiumPackage));
 
     return (
       <Modal
@@ -5131,19 +5190,25 @@ export default function App() {
           <View style={styles.sheetCard}>
             <View style={styles.sheetHandle} />
             <View style={styles.paywallHero}>
+              <View style={styles.paywallHeroRow}>
+                <View style={styles.paywallHeroIcon}>
+                  <Text style={styles.paywallHeroIconText}>💎</Text>
+                </View>
+                <Pressable
+                  style={styles.closeIconButton}
+                  onPress={() => {
+                    void dismissPaywall();
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={styles.closeIconText}>✕</Text>
+                </Pressable>
+              </View>
               <View style={styles.paywallHeroCopy}>
-                <Text style={styles.paywallEyebrow}>Budget Buddy Premium</Text>
+                <Text style={styles.paywallEyebrow}>Unlock Premium</Text>
                 <Text style={styles.paywallTitle}>{paywallMeta.title}</Text>
                 <Text style={styles.paywallSubtitle}>{paywallMeta.subtitle}</Text>
               </View>
-              <Pressable
-                style={styles.secondaryButton}
-                onPress={() => {
-                  void dismissPaywall();
-                }}
-              >
-                <Text style={styles.secondaryButtonText}>Close</Text>
-              </Pressable>
             </View>
 
             <ScrollView
@@ -5153,7 +5218,7 @@ export default function App() {
             >
               <View style={styles.compactHighlightRow}>
                 <View style={styles.compactHighlightChip}>
-                  <Text style={styles.compactHighlightText}>Core budgeting stays free</Text>
+                  <Text style={styles.compactHighlightText}>Essential features included</Text>
                 </View>
                 {purchaseSnapshot.currentOfferingDescription ? (
                   <View style={styles.compactHighlightChip}>
@@ -5166,27 +5231,26 @@ export default function App() {
 
               <View style={styles.paywallFeatureList}>
                 {paywallFeatures.map((feature) => (
-                  <View key={feature} style={styles.paywallFeatureRow}>
-                    <View style={styles.paywallFeatureDot} />
-                    <Text style={styles.paywallFeatureText}>{feature}</Text>
+                  <View key={feature.text} style={styles.paywallFeatureRow}>
+                    <Text style={styles.paywallFeatureIcon}>{feature.emoji}</Text>
+                    <Text style={styles.paywallFeatureText}>{feature.text}</Text>
                   </View>
                 ))}
               </View>
 
-              {annualPremiumPackage || secondaryPackage ? (
+              {paywallPackages.length > 0 ? (
                 <View style={styles.paywallPlanStack}>
-                  {renderPremiumPlanCard(annualPremiumPackage ?? secondaryPackage, {
-                    primary: true,
-                  })}
-                  {annualPremiumPackage && secondaryPackage
-                    ? renderPremiumPlanCard(secondaryPackage, { primary: false })
-                    : null}
+                  {paywallPackages.map((premiumPackage) =>
+                    renderPremiumPlanCard(premiumPackage, {
+                      primary: premiumPackage.kind === 'annual',
+                    }),
+                  )}
                 </View>
               ) : (
                 <View style={styles.emptyStateCompact}>
                   <Text style={styles.emptyTitle}>Premium unavailable</Text>
                   <Text style={styles.emptyText}>
-                    Core budgeting is still free and local. Premium can be restored or started when offers are available.
+                    Budget Buddy Essential is always available. Premium can be restored or started when offers are available.
                   </Text>
                 </View>
               )}
@@ -5491,7 +5555,7 @@ export default function App() {
       {activeSettingsSection === 'cloud' ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Recovery</Text>
-          <Text style={styles.sectionSubtitle}>Stay local by default. Turn recovery on only when you want a way back after reinstall.</Text>
+          <Text style={styles.sectionSubtitle}>Your budget stays personal by default. Enable recovery backup when you want protection after reinstall.</Text>
 
           <View style={styles.accountStatusGrid}>
             <View style={styles.accountStatusTile}>
@@ -5507,42 +5571,54 @@ export default function App() {
             </View>
           </View>
 
-          <View style={styles.accountBanner}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionHeaderCopy}>
-                <Text style={styles.reviewTitle}>{premiumStatusLabel}</Text>
-                <Text style={styles.suggestionText}>{premiumStatusMeta}</Text>
-              </View>
-              {!hasPremiumAccess ? (
-                <Pressable
-                  style={styles.inlineButtonCompact}
-                  onPress={() => openPremiumPaywall('settings_upgrade')}
-                >
-                  <Text style={styles.inlineButtonText}>Upgrade</Text>
-                </Pressable>
-              ) : null}
-            </View>
-
-            <View style={styles.actionRow}>
-              <Pressable
-                style={[styles.tertiaryButton, paywallBusyAction === 'restore' && styles.buttonDisabled]}
-                onPress={() => {
-                  setPaywallSource('settings_upgrade');
-                  void restorePremiumAccess();
-                }}
-                disabled={paywallBusyAction === 'restore'}
-              >
-                <Text style={styles.tertiaryButtonText}>
-                  {paywallBusyAction === 'restore' ? 'Restoring...' : 'Restore purchases'}
+          {!hasPremiumAccess ? (
+            <View style={styles.upgradeCard}>
+              <View style={styles.upgradeCardContent}>
+                <Text style={styles.upgradeCardTitle}>Upgrade to Premium</Text>
+                <Text style={styles.upgradeCardSubtitle}>
+                  AI helpers, smart tidy-up, and recovery backup — one plan.
                 </Text>
-              </Pressable>
-              {hasPremiumAccess ? (
+                <View style={styles.upgradeCardFeatures}>
+                  <Text style={styles.upgradeCardFeature}>✨ Smart expense suggestions</Text>
+                  <Text style={styles.upgradeCardFeature}>📊 Monthly check-ins</Text>
+                  <Text style={styles.upgradeCardFeature}>☁️ Reinstall recovery backup</Text>
+                </View>
+              </View>
+              <AnimatedPressable
+                style={styles.upgradeCardButton}
+                onPress={() => openPremiumPaywall('settings_upgrade')}
+              >
+                <Text style={styles.upgradeCardButtonText}>See plans</Text>
+              </AnimatedPressable>
+            </View>
+          ) : (
+            <View style={styles.accountBanner}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionHeaderCopy}>
+                  <Text style={styles.reviewTitle}>{premiumStatusLabel}</Text>
+                  <Text style={styles.suggestionText}>{premiumStatusMeta}</Text>
+                </View>
+              </View>
+
+              <View style={styles.actionRow}>
+                <Pressable
+                  style={[styles.tertiaryButton, paywallBusyAction === 'restore' && styles.buttonDisabled]}
+                  onPress={() => {
+                    setPaywallSource('settings_upgrade');
+                    void restorePremiumAccess();
+                  }}
+                  disabled={paywallBusyAction === 'restore'}
+                >
+                  <Text style={styles.tertiaryButtonText}>
+                    {paywallBusyAction === 'restore' ? 'Restoring...' : 'Restore purchases'}
+                  </Text>
+                </Pressable>
                 <Pressable style={styles.tertiaryButton} onPress={handleManageSubscription}>
                   <Text style={styles.tertiaryButtonText}>Manage subscription</Text>
                 </Pressable>
-              ) : null}
+              </View>
             </View>
-          </View>
+          )}
 
           {!isPaywallVisible && paywallStatus ? (
             <Text style={styles.aiReviewErrorText}>{paywallStatus}</Text>
@@ -5551,13 +5627,16 @@ export default function App() {
           <View style={styles.accountPromptCard}>
             <Text style={styles.reviewTitle}>Recovery backup</Text>
             <Text style={styles.suggestionText}>
-              Keep it off unless you want this budget back after reinstall or on another device.
+              Off by default. When enabled with Premium, your budget is protected across device changes.
             </Text>
           </View>
 
           <View style={styles.switchRow}>
             <View style={styles.sheetHeaderCopy}>
-              <Text style={styles.switchLabel}>Keep a recovery backup</Text>
+              <View style={styles.premiumFeatureLabel}>
+                <Text style={styles.switchLabel}>Keep a recovery backup</Text>
+                {!hasPremiumAccess && <PremiumBadge accent={currentTheme.accent} accentText={currentTheme.heroText} />}
+              </View>
               <Text style={styles.accountMeta}>
                 Off by default. Needs Premium and sign-in for reinstall recovery.
               </Text>
@@ -5583,7 +5662,7 @@ export default function App() {
           {!isSignedIn ? (
             <>
               <View style={styles.accountPromptCard}>
-                <Text style={styles.reviewTitle}>Stay local or sign in</Text>
+                <Text style={styles.reviewTitle}>Personal or Synced</Text>
                 <Text style={styles.suggestionText}>
                   Create an account only when you want reinstall recovery or cross-device backup.
                 </Text>
@@ -5729,7 +5808,7 @@ export default function App() {
               <View style={styles.compactHighlightRow}>
                 {[
                   hasPremiumAccess ? 'Premium active' : 'Free plan',
-                  cloudBackupEnabled && hasPremiumAccess ? 'Backup on' : 'Local only',
+                  cloudBackupEnabled && hasPremiumAccess ? 'Backup on' : 'Personal',
                   'Recoverable login',
                   'Budget data separate',
                 ].map((item) => (
@@ -5898,7 +5977,10 @@ export default function App() {
 
           <View style={styles.sectionHeader}>
             <View style={styles.sectionHeaderCopy}>
-              <Text style={styles.sectionTitle}>Smart tidy-up</Text>
+              <View style={styles.premiumFeatureLabel}>
+                <Text style={styles.sectionTitle}>Smart tidy-up</Text>
+                {!hasPremiumAccess && <PremiumBadge accent={currentTheme.accent} accentText={currentTheme.heroText} />}
+              </View>
               <Text style={styles.sectionSubtitle}>Spot duplicate lanes, naming drift, and repeat labels after imports.</Text>
             </View>
 
@@ -7136,7 +7218,10 @@ export default function App() {
                     <View style={styles.suggestionCard}>
                       <View style={styles.sectionHeader}>
                         <View style={styles.sectionHeaderCopy}>
-                          <Text style={styles.reviewTitle}>Starter hints</Text>
+                          <View style={styles.premiumFeatureLabel}>
+                            <Text style={styles.reviewTitle}>Starter hints</Text>
+                            {!hasPremiumAccess && <PremiumBadge accent={currentTheme.accent} accentText={currentTheme.heroText} />}
+                          </View>
                           <Text style={styles.suggestionText}>
                             Reuse likely lanes from earlier months, then keep only what still fits.
                           </Text>
@@ -8537,7 +8622,10 @@ export default function App() {
             <View style={styles.card}>
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionHeaderCopy}>
-                  <Text style={styles.sectionTitle}>Monthly check-in</Text>
+                  <View style={styles.premiumFeatureLabel}>
+                    <Text style={styles.sectionTitle}>Monthly check-in</Text>
+                    {!hasPremiumAccess && <PremiumBadge accent={currentTheme.accent} accentText={currentTheme.heroText} />}
+                  </View>
                   <Text style={styles.sectionSubtitle}>A private review built from this month’s totals only.</Text>
                 </View>
 
@@ -9190,12 +9278,13 @@ export default function App() {
       />
       <View style={styles.bottomNav}>
         {screenTabs.map((screenId) => (
-          <Pressable
+          <AnimatedPressable
             key={screenId}
             style={[
               styles.bottomNavItem,
               activeNavScreen === screenId && styles.bottomNavItemActive,
             ]}
+            scale={0.96}
             onPress={() => {
               if (screenId === 'settings') {
                 openMoreSection('overview');
@@ -9223,7 +9312,7 @@ export default function App() {
             >
               {screenMeta[screenId].label}
             </Text>
-          </Pressable>
+          </AnimatedPressable>
         ))}
       </View>
       <StatusBar style="dark" />
@@ -10255,6 +10344,57 @@ const createStyles = (
       padding: 12,
       marginBottom: 12,
     },
+    premiumFeatureLabel: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    upgradeCard: {
+      backgroundColor: theme.accentSoft,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: theme.accentBorder,
+      padding: 20,
+      marginBottom: 14,
+      gap: 16,
+    },
+    upgradeCardContent: {
+      gap: 8,
+    },
+    upgradeCardTitle: {
+      color: theme.text,
+      fontSize: 18,
+      fontWeight: '900',
+      letterSpacing: -0.3,
+    },
+    upgradeCardSubtitle: {
+      color: theme.textMuted,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    upgradeCardFeatures: {
+      gap: 6,
+      marginTop: 6,
+    },
+    upgradeCardFeature: {
+      color: theme.accentText,
+      fontSize: 13,
+      fontWeight: '700',
+      lineHeight: 18,
+    },
+    upgradeCardButton: {
+      backgroundColor: theme.accent,
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 20,
+      alignSelf: 'flex-start',
+    },
+    upgradeCardButtonText: {
+      color: theme.heroText,
+      fontSize: 14,
+      fontWeight: '800',
+      letterSpacing: 0.3,
+    },
     accountStatusGrid: {
       flexDirection: isCompact ? 'column' : 'row',
       gap: 10,
@@ -10803,32 +10943,61 @@ const createStyles = (
     },
     paywallHero: {
       backgroundColor: theme.heroPanel,
-      borderRadius: 24,
-      paddingHorizontal: 16,
-      paddingVertical: 16,
-      marginBottom: 14,
-      gap: 12,
+      borderRadius: 28,
+      paddingHorizontal: 24,
+      paddingVertical: 24,
+      marginBottom: 18,
+      gap: 16,
+    },
+    paywallHeroRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+    },
+    paywallHeroIcon: {
+      width: 60,
+      height: 60,
+      backgroundColor: theme.accentSoft,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    paywallHeroIconText: {
+      fontSize: 32,
+      lineHeight: 40,
+    },
+    closeIconButton: {
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      marginRight: -10,
+      marginTop: -10,
+    },
+    closeIconText: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: theme.textMuted,
     },
     paywallHeroCopy: {
       gap: 6,
     },
     paywallEyebrow: {
-      color: theme.accentText,
-      fontSize: 11,
-      fontWeight: '800',
-      letterSpacing: 0.5,
+      color: theme.accent,
+      fontSize: 12,
+      fontWeight: '700',
+      letterSpacing: 0.8,
       textTransform: 'uppercase',
     },
     paywallTitle: {
       color: theme.text,
-      fontSize: isCompact ? 24 : 28,
-      lineHeight: isCompact ? 29 : 33,
+      fontSize: isCompact ? 26 : 32,
+      lineHeight: isCompact ? 32 : 38,
       fontWeight: '900',
+      letterSpacing: -0.5,
     },
     paywallSubtitle: {
       color: theme.textMuted,
-      fontSize: 13,
-      lineHeight: 19,
+      fontSize: 14,
+      lineHeight: 21,
     },
     paywallFeatureList: {
       gap: 10,
@@ -10845,6 +11014,11 @@ const createStyles = (
       borderRadius: 999,
       backgroundColor: theme.accent,
     },
+    paywallFeatureIcon: {
+      fontSize: 18,
+      width: 28,
+      textAlign: 'center',
+    },
     paywallFeatureText: {
       flex: 1,
       color: theme.text,
@@ -10857,87 +11031,91 @@ const createStyles = (
       marginBottom: 12,
     },
     paywallPlanCard: {
-      borderRadius: 22,
+      borderRadius: 20,
       borderWidth: 1,
       borderColor: theme.divider,
-      backgroundColor: theme.surfaceMuted,
-      padding: 14,
-      gap: 10,
+      backgroundColor: theme.surface,
+      padding: 18,
+      gap: 12,
     },
     paywallPlanCardPrimary: {
-      backgroundColor: theme.accentSoft,
-      borderColor: theme.accentBorder,
+      backgroundColor: theme.accent,
+      borderColor: theme.accent,
     },
     paywallPlanHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'flex-start',
-      gap: 10,
+      gap: 12,
     },
     paywallPlanCopy: {
       flex: 1,
-      gap: 4,
+      gap: 6,
     },
     paywallPlanTitle: {
       color: theme.text,
-      fontSize: 18,
+      fontSize: 19,
       fontWeight: '900',
+      letterSpacing: -0.3,
     },
     paywallPlanTitlePrimary: {
-      color: theme.accentText,
+      color: theme.heroText,
     },
     paywallPlanPrice: {
       color: theme.text,
-      fontSize: 21,
+      fontSize: 24,
       fontWeight: '900',
+      letterSpacing: -0.5,
     },
     paywallPlanMeta: {
       color: theme.textMuted,
-      fontSize: 11,
-      lineHeight: 16,
+      fontSize: 12,
+      lineHeight: 17,
       fontWeight: '600',
     },
     paywallPlanBadge: {
       alignSelf: 'flex-start',
       borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
       backgroundColor: theme.surfaceTint,
     },
     paywallPlanBadgePrimary: {
-      backgroundColor: theme.accent,
+      backgroundColor: theme.heroPanel,
     },
     paywallPlanBadgeText: {
       color: theme.accentText,
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: '800',
+      letterSpacing: 0.5,
     },
     paywallPlanBadgeTextPrimary: {
       color: theme.heroText,
     },
     paywallPlanDescription: {
       color: theme.textMuted,
-      fontSize: 12,
-      lineHeight: 18,
+      fontSize: 13,
+      lineHeight: 19,
     },
     paywallPlanButton: {
-      borderRadius: 16,
-      paddingVertical: 10,
-      paddingHorizontal: 14,
-      backgroundColor: theme.surface,
+      borderRadius: 14,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      backgroundColor: theme.surfaceMuted,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
       borderColor: theme.divider,
     },
     paywallPlanButtonPrimary: {
-      backgroundColor: theme.accent,
-      borderColor: theme.accentBorder,
+      backgroundColor: theme.heroPanel,
+      borderColor: theme.heroPanel,
     },
     paywallPlanButtonText: {
       color: theme.accentText,
-      fontSize: 13,
+      fontSize: 14,
       fontWeight: '800',
+      letterSpacing: 0.3,
     },
     paywallPlanButtonTextPrimary: {
       color: theme.heroText,
@@ -11123,7 +11301,7 @@ const createStyles = (
       paddingBottom: 12,
       backgroundColor: `${theme.background}F2`,
       borderTopWidth: 1,
-      borderTopColor: theme.divider,
+      borderTopColor: theme.accent + '18',
     },
     bottomNavItem: {
       flex: 1,
@@ -11135,13 +11313,14 @@ const createStyles = (
       gap: 6,
     },
     bottomNavItemActive: {
-      backgroundColor: theme.surface,
+      backgroundColor: theme.accentSoft,
     },
     bottomNavMarker: {
-      width: 18,
-      height: 3,
+      width: 24,
+      height: 4,
       borderRadius: 999,
       backgroundColor: 'transparent',
+      marginTop: 2,
     },
     bottomNavMarkerActive: {
       backgroundColor: theme.accent,
@@ -11152,7 +11331,9 @@ const createStyles = (
       opacity: 0.45,
     },
     bottomNavIconActive: {
+      fontSize: 21,
       opacity: 1,
+      color: theme.accent,
     },
     bottomNavText: {
       color: theme.textMuted,

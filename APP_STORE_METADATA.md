@@ -57,6 +57,13 @@ Budget Buddy Premium unlocks:
 11. Point App Store Connect support/privacy URLs to hosted versions of [SUPPORT.md](./SUPPORT.md) and [PRIVACY.md](./PRIVACY.md).
 12. Upload final icon, screenshots, and promotional art before submission.
 
+## Subscription testing
+
+1. Copy [.env.example](./.env.example) to `.env` and set `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` to the RevenueCat iOS public SDK key for bundle ID `com.rahulkumar.budgetbuddy`.
+2. Restart Expo with `npx expo start --clear`.
+3. Test purchases in an iOS development build or TestFlight build. Expo Go cannot complete native in-app purchases.
+4. Confirm RevenueCat has a current offering with packages mapped to `premium_monthly` and `premium_yearly`.
+
 ## Build and submit commands
 
 ```bash

@@ -50,6 +50,9 @@
       "release": {
         "supportUrlRequired": true,
         "privacyPolicyUrlRequired": true
+      },
+      "eas": {
+        "projectId": "54708189-09b4-407e-8650-bf227cf588fb"
       }
     },
     "plugins": [

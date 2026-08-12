@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Budget Buddy - App Architecture</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    svg { max-width: 100%; height: auto; }
+    .dark-mode { background: #0f1117; }
+    .dark-mode svg { background: #0f1117; }
+  </style>
+</head>
+<body>
+  <svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">
+    <!-- Background -->
+    <rect width="800" height="600" fill="#ffffff"/>
+
+    <!-- Title -->
+    <text x="400" y="30" font-size="24" font-weight="600" text-anchor="middle" fill="#0f172a">Budget Buddy Architecture</text>
+
+    <!-- UI Layer -->
+    <g id="ui-layer">
+      <rect x="50" y="80" width="700" height="100" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" rx="8"/>
+      <text x="400" y="110" font-size="14" font-weight="600" text-anchor="middle" fill="#0c4a6e">React Native / Expo UI Layer</text>
+
+      <rect x="80" y="125" width="140" height="40" fill="#ffffff" stroke="#0284c7" stroke-width="1.5" rx="4"/>
+      <text x="150" y="152" font-size="12" text-anchor="middle" fill="#0284c7">Monthly Dashboard</text>
+
+      <rect x="240" y="125" width="140" height="40" fill="#ffffff" stroke="#0284c7" stroke-width="1.5" rx="4"/>
+      <text x="310" y="152" font-size="12" text-anchor="middle" fill="#0284c7">Categories View</text>
+
+      <rect x="400" y="125" width="140" height="40" fill="#ffffff" stroke="#0284c7" stroke-width="1.5" rx="4"/>
+      <text x="470" y="152" font-size="12" text-anchor="middle" fill="#0284c7">Transactions</text>
+
+      <rect x="560" y="125" width="140" height="40" fill="#ffffff" stroke="#0284c7" stroke-width="1.5" rx="4"/>
+      <text x="630" y="152" font-size="12" text-anchor="middle" fill="#0284c7">Settings</text>
+    </g>
+
+    <!-- Data Model Layer -->
+    <g id="data-layer">
+      <rect x="50" y="220" width="700" height="120" fill="#fef3c7" stroke="#d97706" stroke-width="2" rx="8"/>
+      <text x="400" y="250" font-size="14" font-weight="600" text-anchor="middle" fill="#92400e">Data Model & Business Logic</text>
+
+      <rect x="80" y="265" width="130" height="50" fill="#ffffff" stroke="#d97706" stroke-width="1.5" rx="4"/>
+      <text x="145" y="285" font-size="11" text-anchor="middle" fill="#d97706" font-weight="500">Budget</text>
+      <text x="145" y="300" font-size="10" text-anchor="middle" fill="#b45309">(Categories)</text>
+
+      <rect x="230" y="265" width="130" height="50" fill="#ffffff" stroke="#d97706" stroke-width="1.5" rx="4"/>
+      <text x="295" y="285" font-size="11" text-anchor="middle" fill="#d97706" font-weight="500">Transactions</text>
+      <text x="295" y="300" font-size="10" text-anchor="middle" fill="#b45309">(Expenses)</text>
+
+      <rect x="380" y="265" width="130" height="50" fill="#ffffff" stroke="#d97706" stroke-width="1.5" rx="4"/>
+      <text x="445" y="285" font-size="11" text-anchor="middle" fill="#d97706" font-weight="500">Monthly</text>
+      <text x="445" y="300" font-size="10" text-anchor="middle" fill="#b45309">(Periods)</text>
+
+      <rect x="530" y="265" width="140" height="50" fill="#ffffff" stroke="#d97706" stroke-width="1.5" rx="4"/>
+      <text x="600" y="285" font-size="11" text-anchor="middle" fill="#d97706" font-weight="500">Goals & Accounts</text>
+      <text x="600" y="300" font-size="10" text-anchor="middle" fill="#b45309">(Preferences)</text>
+    </g>
+
+    <!-- Storage Layer -->
+    <g id="storage-layer">
+      <rect x="50" y="400" width="700" height="140" fill="#d1fae5" stroke="#10b981" stroke-width="2" rx="8"/>
+      <text x="400" y="430" font-size="14" font-weight="600" text-anchor="middle" fill="#047857">Storage & Services</text>
+
+      <!-- Local Storage -->
+      <rect x="80" y="450" width="160" height="70" fill="#ffffff" stroke="#10b981" stroke-width="1.5" rx="4"/>
+      <text x="160" y="475" font-size="11" font-weight="500" text-anchor="middle" fill="#10b981">Local Storage</text>
+      <text x="160" y="493" font-size="9" text-anchor="middle" fill="#059669">AsyncStorage</text>
+      <text x="160" y="506" font-size="9" text-anchor="middle" fill="#059669">JSON State</text>
+
+      <!-- Firebase (Optional) -->
+      <rect x="280" y="450" width="160" height="70" fill="#ffffff" stroke="#10b981" stroke-width="1.5" rx="4" stroke-dasharray="4,4"/>
+      <text x="360" y="475" font-size="11" font-weight="500" text-anchor="middle" fill="#10b981">Firebase</text>
+      <text x="360" y="493" font-size="9" text-anchor="middle" fill="#059669">Backup</text>
+      <text x="360" y="506" font-size="9" text-anchor="middle" fill="#059669">(Optional)</text>
+
+      <!-- RevenueCat -->
+      <rect x="480" y="450" width="160" height="70" fill="#ffffff" stroke="#10b981" stroke-width="1.5" rx="4"/>
+      <text x="560" y="475" font-size="11" font-weight="500" text-anchor="middle" fill="#10b981">RevenueCat</text>
+      <text x="560" y="493" font-size="9" text-anchor="middle" fill="#059669">Premium</text>
+      <text x="560" y="506" font-size="9" text-anchor="middle" fill="#059669">Subscriptions</text>
+
+      <!-- Device -->
+      <rect x="680" y="450" width="50" height="70" fill="#ffffff" stroke="#10b981" stroke-width="1.5" rx="4"/>
+      <text x="705" y="485" font-size="10" font-weight="500" text-anchor="middle" fill="#10b981">Device</text>
+    </g>
+
+    <!-- Connections -->
+    <g stroke="#64748b" stroke-width="2" fill="none" stroke-linecap="round">
+      <!-- UI to Data -->
+      <path d="M 150 165 Q 150 190 150 220" marker-end="url(#arrowhead)"/>
+      <path d="M 310 165 Q 310 190 310 220" marker-end="url(#arrowhead)"/>
+      <path d="M 470 165 Q 470 190 470 220" marker-end="url(#arrowhead)"/>
+      <path d="M 630 165 Q 630 190 630 220" marker-end="url(#arrowhead)"/>
+
+      <!-- Data to Storage -->
+      <path d="M 160 340 Q 160 370 160 400" marker-end="url(#arrowhead)"/>
+      <path d="M 295 340 Q 360 370 360 400" stroke-dasharray="4,4" marker-end="url(#arrowhead-dash)"/>
+      <path d="M 445 340 Q 560 370 560 400" marker-end="url(#arrowhead)"/>
+      <path d="M 600 340 Q 705 370 705 400" marker-end="url(#arrowhead)"/>
+    </g>
+
+    <!-- Arrow markers -->
+    <defs>
+      <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
+        <polygon points="0 0, 10 5, 0 10" fill="#64748b"/>
+      </marker>
+      <marker id="arrowhead-dash" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
+        <polygon points="0 0, 10 5, 0 10" fill="#9ca3af"/>
+      </marker>
+    </defs>
+
+    <!-- Legend -->
+    <text x="50" y="570" font-size="10" fill="#64748b">━━━ Required  ╌╌╌ Optional</text>
+  </svg>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Budget Buddy - Workflow</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    svg { max-width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+  <svg viewBox="0 0 900 700" xmlns="http://www.w3.org/2000/svg">
+    <!-- Background -->
+    <rect width="900" height="700" fill="#ffffff"/>
+
+    <!-- Title -->
+    <text x="450" y="35" font-size="24" font-weight="600" text-anchor="middle" fill="#0f172a">Budget Buddy Workflow</text>
+    <text x="450" y="60" font-size="12" text-anchor="middle" fill="#64748b">How users track and manage their monthly budget</text>
+
+    <!-- Month Start -->
+    <g id="start">
+      <circle cx="450" cy="100" r="30" fill="#0284c7" stroke="#0c4a6e" stroke-width="2"/>
+      <text x="450" y="110" font-size="13" font-weight="600" text-anchor="middle" fill="#ffffff">Month</text>
+      <text x="450" y="125" font-size="13" font-weight="600" text-anchor="middle" fill="#ffffff">Start</text>
+    </g>
+
+    <!-- Set Budget -->
+    <g id="set-budget">
+      <rect x="340" y="160" width="220" height="60" fill="#dbeafe" stroke="#0284c7" stroke-width="2" rx="6"/>
+      <text x="450" y="185" font-size="13" font-weight="600" text-anchor="middle" fill="#0c4a6e">Set Monthly Budget Limit</text>
+      <text x="450" y="205" font-size="11" text-anchor="middle" fill="#0284c7">Define total spending cap</text>
+    </g>
+
+    <!-- Create Categories -->
+    <g id="create-cats">
+      <rect x="340" y="260" width="220" height="60" fill="#fef3c7" stroke="#d97706" stroke-width="2" rx="6"/>
+      <text x="450" y="285" font-size="13" font-weight="600" text-anchor="middle" fill="#92400e">Create Budget Categories</text>
+      <text x="450" y="305" font-size="11" text-anchor="middle" fill="#b45309">Needs, Wants, Savings</text>
+    </g>
+
+    <!-- Track Expenses -->
+    <g id="track">
+      <rect x="340" y="360" width="220" height="60" fill="#d1fae5" stroke="#10b981" stroke-width="2" rx="6"/>
+      <text x="450" y="385" font-size="13" font-weight="600" text-anchor="middle" fill="#047857">Track Expenses</text>
+      <text x="450" y="405" font-size="11" text-anchor="middle" fill="#059669">Log transactions daily</text>
+    </g>
+
+    <!-- Analyze Spending -->
+    <g id="analyze">
+      <rect x="340" y="460" width="220" height="60" fill="#f3e8ff" stroke="#a855f7" stroke-width="2" rx="6"/>
+      <text x="450" y="485" font-size="13" font-weight="600" text-anchor="middle" fill="#6b21a8">Analyze Spending</text>
+      <text x="450" y="505" font-size="11" text-anchor="middle" fill="#7c3aed">View summaries & trends</text>
+    </g>
+
+    <!-- Month End Decision -->
+    <g id="decision">
+      <polygon points="450,580 520,620 450,660 380,620" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+      <text x="450" y="625" font-size="11" font-weight="600" text-anchor="middle" fill="#7c2d12">Over Budget?</text>
+    </g>
+
+    <!-- Adjust Path -->
+    <g id="adjust">
+      <rect x="600" y="460" width="220" height="60" fill="#fce7f3" stroke="#ec4899" stroke-width="2" rx="6"/>
+      <text x="710" y="485" font-size="13" font-weight="600" text-anchor="middle" fill="#831843">Adjust Spending</text>
+      <text x="710" y="505" font-size="11" text-anchor="middle" fill="#be123c">Cut expenses</text>
+    </g>
+
+    <!-- Success Path -->
+    <g id="success">
+      <circle cx="200" cy="620" r="30" fill="#86efac" stroke="#15803d" stroke-width="2"/>
+      <text x="200" y="625" font-size="11" font-weight="600" text-anchor="middle" fill="#15803d">On</text>
+      <text x="200" y="638" font-size="11" font-weight="600" text-anchor="middle" fill="#15803d">Track</text>
+    </g>
+
+    <!-- Next Month -->
+    <g id="next-month">
+      <circle cx="700" cy="620" r="30" fill="#bfdbfe" stroke="#1e40af" stroke-width="2"/>
+      <text x="700" y="625" font-size="11" font-weight="600" text-anchor="middle" fill="#1e40af">Next</text>
+      <text x="700" y="638" font-size="11" font-weight="600" text-anchor="middle" fill="#1e40af">Month</text>
+    </g>
+
+    <!-- Connections -->
+    <g stroke="#64748b" stroke-width="2" fill="none" stroke-linecap="round">
+      <!-- Start to Set Budget -->
+      <path d="M 450 130 L 450 160"/>
+
+      <!-- Set Budget to Categories -->
+      <path d="M 450 220 L 450 260"/>
+
+      <!-- Categories to Track -->
+      <path d="M 450 320 L 450 360"/>
+
+      <!-- Track to Analyze -->
+      <path d="M 450 420 L 450 460"/>
+
+      <!-- Analyze to Decision -->
+      <path d="M 450 520 L 450 580"/>
+
+      <!-- Decision to Adjust (Yes) -->
+      <path d="M 520 620 L 600 490" stroke="#ec4899" stroke-width="2.5"/>
+      <text x="555" y="615" font-size="11" fill="#ec4899" font-weight="500">Yes</text>
+
+      <!-- Adjust back to Track -->
+      <path d="M 710 460 L 710 390 Q 710 375 560 375" stroke="#ec4899" stroke-width="2.5" stroke-dasharray="5,3"/>
+
+      <!-- Decision to Success (No) -->
+      <path d="M 380 620 L 230 620" stroke="#10b981" stroke-width="2.5"/>
+      <text x="300" y="615" font-size="11" fill="#10b981" font-weight="500">No</text>
+
+      <!-- Success to Next Month -->
+      <path d="M 200 590 L 200 520 Q 200 490 450 490" stroke="#10b981" stroke-width="2.5" stroke-dasharray="5,3"/>
+      <text x="320" y="505" font-size="11" fill="#10b981" font-weight="500">Loop</text>
+
+      <!-- Alternative: Direct to Next -->
+      <path d="M 520 620 L 670 620" stroke="#0284c7" stroke-width="2"/>
+      <text x="595" y="615" font-size="11" fill="#0284c7" font-weight="500">Continue</text>
+    </g>
+
+    <!-- Arrow markers -->
+    <defs>
+      <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
+        <polygon points="0 0, 10 5, 0 10" fill="#64748b"/>
+      </marker>
+    </defs>
+
+    <!-- Legend -->
+    <g id="legend">
+      <text x="50" y="680" font-size="11" fill="#64748b" font-weight="500">User Actions</text>
+      <rect x="160" y="668" width="8" height="8" fill="#dbeafe" stroke="#0284c7" stroke-width="1"/>
+      <rect x="250" y="668" width="8" height="8" fill="#fef3c7" stroke="#d97706" stroke-width="1"/>
+      <rect x="340" y="668" width="8" height="8" fill="#d1fae5" stroke="#10b981" stroke-width="1"/>
+    </g>
+  </svg>
+</body>
+</html>

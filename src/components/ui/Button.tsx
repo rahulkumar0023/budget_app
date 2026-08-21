@@ -64,20 +64,27 @@ export const Button: React.FC<ButtonProps> = ({
     // Variant styles
     variantPrimary: {
       backgroundColor: theme.primary,
+      ...shadows.sm,
+      elevation: 3,
     },
     variantSecondary: {
-      backgroundColor: theme.backgroundSecondary,
+      backgroundColor: `${theme.primary}1F`, // 12% opacity
       borderWidth: 1,
-      borderColor: theme.border,
+      borderColor: `${theme.primary}66`, // 40% opacity
     },
     variantTertiary: {
       backgroundColor: 'transparent',
+      borderWidth: 1,
+      borderColor: `${theme.primary}66`,
+      borderStyle: 'dashed',
     },
     variantGhost: {
       backgroundColor: 'transparent',
     },
     variantDanger: {
       backgroundColor: theme.error,
+      ...shadows.sm,
+      elevation: 3,
     },
     text: {
       fontSize: typography.fontSize.base,

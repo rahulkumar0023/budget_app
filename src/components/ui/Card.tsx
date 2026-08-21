@@ -8,7 +8,7 @@ import {
 import { spacing, borderRadius, shadows } from '../../styles/designTokens';
 import { lightTheme, darkTheme } from '../../styles/designTokens';
 
-export type CardVariant = 'elevated' | 'filled' | 'outlined';
+export type CardVariant = 'surface' | 'accent' | 'filled';
 
 interface CardProps {
   children: React.ReactNode;
@@ -21,7 +21,7 @@ interface CardProps {
 
 export const Card: React.FC<CardProps> = ({
   children,
-  variant = 'filled',
+  variant = 'surface',
   padding = spacing.lg,
   style,
   onPress,
@@ -35,38 +35,32 @@ export const Card: React.FC<CardProps> = ({
       borderRadius: borderRadius.lg,
       padding,
     },
-    variantElevated: {
+    // Surface Card - Default, clean look
+    variantSurface: {
       backgroundColor: theme.surface,
-      ...shadows.md,
+      borderWidth: 1,
+      borderColor: `${theme.primary}33`, // 20% opacity
+      ...shadows.sm,
     },
+    // Accent Card - Highlight sections
+    variantAccent: {
+      backgroundColor: `${theme.primary}14`, // 8% opacity
+      borderWidth: 1,
+      borderColor: `${theme.primary}4D`, // 30% opacity
+    },
+    // Filled Card - Status/Important
     variantFilled: {
-      backgroundColor: theme.backgroundSecondary,
-      borderWidth: 1,
-      borderColor: theme.border,
-    },
-    variantOutlined: {
-      backgroundColor: 'transparent',
-      borderWidth: 1,
-      borderColor: theme.border,
+      backgroundColor: theme.primary,
+      borderWidth: 0,
+      ...shadows.md,
     },
   });
 
   const variantStyles = {
-    elevated: styles.variantElevated,
+    surface: styles.variantSurface,
+    accent: styles.variantAccent,
     filled: styles.variantFilled,
-    outlined: styles.variantOutlined,
   }[variant];
-
-  if (onPress) {
-    return (
-      <View
-        style={[styles.card, variantStyles, style]}
-        testID={testID}
-      >
-        {children}
-      </View>
-    );
-  }
 
   return (
     <View

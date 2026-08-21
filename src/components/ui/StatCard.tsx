@@ -72,7 +72,7 @@ export const StatCard: React.FC<StatCardProps> = ({
   };
 
   return (
-    <Card variant="filled" padding={spacing.lg} style={[styles.container, style]} testID={testID}>
+    <Card variant="filled" padding={spacing.lg} style={[styles.container, style] as any} testID={testID}>
       <Text style={styles.label}>{label}</Text>
       <Text style={[styles.value, { color: getValueColor() }]}>
         {value}

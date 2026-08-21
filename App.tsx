@@ -6114,20 +6114,23 @@ export default function App() {
                   </View>
 
                   <View style={styles.heroActionDeck}>
-                    <Pressable
-                      style={[styles.primaryButton, styles.heroActionPrimary]}
+                    <Button
+                      variant="primary"
+                      size="large"
                       onPress={openBudgetBuilder}
                     >
-                      <Text style={styles.primaryButtonText}>Create budget</Text>
-                    </Pressable>
+                      Create budget
+                    </Button>
 
                     <View style={styles.heroSecondaryRow}>
                       {previousBudgetMonth ? (
-                        <Pressable style={styles.ghostButton} onPress={copyPreviousBudgetIntoActiveMonth}>
-                          <Text style={styles.ghostButtonText}>
-                            Copy {getMonthLabel(previousBudgetMonth.id, localeTag)}
-                          </Text>
-                        </Pressable>
+                        <Button
+                          variant="ghost"
+                          size="medium"
+                          onPress={copyPreviousBudgetIntoActiveMonth}
+                        >
+                          {`Copy ${getMonthLabel(previousBudgetMonth.id, localeTag)}`}
+                        </Button>
                       ) : null}
                     </View>
                   </View>

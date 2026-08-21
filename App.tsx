@@ -3005,10 +3005,8 @@ export default function App() {
     updateAppState((current) => ({
       ...current,
       months: current.months.map((month) =>
-        month.id === current.activeMonthId &&
-        month.categories.length === 0 &&
-        month.transactions.length === 0 &&
-        (Number(month.monthlyLimit) || 0) <= 0
+        // Always update active month's currency code when preference changes
+        month.id === current.activeMonthId
           ? { ...month, currencyCode }
           : month,
       ),

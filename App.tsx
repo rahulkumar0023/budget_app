@@ -65,6 +65,7 @@ import {
   type MonthRecord,
   getTotalPlanned,
   getTotalSpent,
+  INCOME_CATEGORY_ID,
   LOCAL_STORAGE_KEY,
   LEGACY_STORAGE_KEY,
   normalizeBudgetAppState,
@@ -141,7 +142,6 @@ import {
   budgetSetupSteps,
   insightWindowMeta,
   MAX_RECENT_CATEGORY_SHORTCUTS,
-  MAX_RECENT_EXPENSE_TEMPLATES,
   MAX_RECENT_SELECTOR_ITEMS,
   paywallSourceMeta,
   PREMIUM_PAYWALL_DISMISS_KEY,
@@ -360,13 +360,15 @@ const buildWeeklyInsightRows = (
 
   return Array.from({ length: 4 }, (_, index) => {
     const weekTransactions = month.transactions.filter(
-      (transaction) => getInsightWeekBucket(new Date(transaction.happenedAt)) === index,
+      (transaction) =>
+        transaction.kind !== 'income' &&
+        getInsightWeekBucket(new Date(transaction.happenedAt)) === index,
     );
     const fixed = weekTransactions
-      .filter((transaction) => transaction.recurring)
+      .filter((transaction) => transaction.kind !== 'income' && transaction.recurring)
       .reduce((sum, transaction) => sum + transaction.amount, 0);
     const flexible = weekTransactions
-      .filter((transaction) => !transaction.recurring)
+      .filter((transaction) => transaction.kind !== 'income' && !transaction.recurring)
       .reduce((sum, transaction) => sum + transaction.amount, 0);
     const state =
       monthPosition > 0
@@ -397,10 +399,10 @@ const buildInsightSummary = (
 ): InsightSummary => {
   const mapMonthSummary = (month: MonthRecord): InsightMonthSummary => {
     const fixedSpent = month.transactions
-      .filter((transaction) => transaction.recurring)
+      .filter((transaction) => transaction.kind !== 'income' && transaction.recurring)
       .reduce((sum, transaction) => sum + transaction.amount, 0);
     const flexibleSpent = month.transactions
-      .filter((transaction) => !transaction.recurring)
+      .filter((transaction) => transaction.kind !== 'income' && !transaction.recurring)
       .reduce((sum, transaction) => sum + transaction.amount, 0);
     const planned = getTotalPlanned(month);
     const spent = fixedSpent + flexibleSpent;
@@ -449,7 +451,7 @@ const buildInsightSummary = (
     const categoriesById = new Map(month.categories.map((category) => [category.id, category]));
 
     month.transactions.forEach((transaction) => {
-      if (transaction.recurring) {
+      if (transaction.kind === 'income' || transaction.recurring) {
         return;
       }
 
@@ -1103,12 +1105,20 @@ export default function App() {
   const [expenseAccountId, setExpenseAccountId] = useState('');
   const [expenseDate, setExpenseDate] = useState(() => new Date());
   const [expenseRecurring, setExpenseRecurring] = useState(false);
+  const [expenseContextCategoryId, setExpenseContextCategoryId] = useState<string | null>(null);
   const [showExpenseDatePicker, setShowExpenseDatePicker] = useState(false);
   const [showExpenseDetails, setShowExpenseDetails] = useState(false);
   const [isExpenseSheetOpen, setIsExpenseSheetOpen] = useState(false);
+  const [isQuickAddMenuOpen, setIsQuickAddMenuOpen] = useState(false);
+  const [isIncomeSheetOpen, setIsIncomeSheetOpen] = useState(false);
+  const [incomeAmount, setIncomeAmount] = useState('');
+  const [incomeSource, setIncomeSource] = useState('');
+  const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null);
   const [showConfetti, setShowConfetti] = useState(false);
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
   const [selectedCategoryDetailId, setSelectedCategoryDetailId] = useState<string | null>(null);
+  const [showCategoryDetailSubcategoryInput, setShowCategoryDetailSubcategoryInput] = useState(false);
+  const [categoryDetailSubcategoryName, setCategoryDetailSubcategoryName] = useState('');
 
   const [accountName, setAccountName] = useState('');
   const [accountKinds, setAccountKinds] = useState<BankAccountKind[]>(['spending']);
@@ -1126,6 +1136,7 @@ export default function App() {
   const [showCategorySubcategories, setShowCategorySubcategories] = useState(false);
   const [showCategoryAdvanced, setShowCategoryAdvanced] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [isReorderingCategories, setIsReorderingCategories] = useState(false);
   const [inlineSubcategoryCategoryId, setInlineSubcategoryCategoryId] = useState<string | null>(null);
   const [inlineSubcategoryText, setInlineSubcategoryText] = useState('');
 
@@ -1170,11 +1181,15 @@ export default function App() {
   >({});
   const [planSetupStep, setPlanSetupStep] = useState<BudgetSetupStep>('limit');
   const [showCategoryComposer, setShowCategoryComposer] = useState(false);
+  const [isBudgetSetupActive, setIsBudgetSetupActive] = useState(false);
+  const [isDeleteBudgetPromptOpen, setIsDeleteBudgetPromptOpen] = useState(false);
 
   const latestStateRef = useRef(appState);
   const bootstrappedUserIdRef = useRef<string | null>(null);
   const setupPaywallPromptShownRef = useRef(false);
   const setupConfettiShownRef = useRef(false);
+  const budgetCategoryNameInputRef = useRef<TextInput>(null);
+  const budgetCategoryAmountInputRef = useRef<TextInput>(null);
   const { width } = useWindowDimensions();
   const isCompact = width < 430;
   const isNarrow = width < 375;
@@ -1676,10 +1691,10 @@ export default function App() {
     .filter((category) => category.recurring)
     .reduce((sum, category) => sum + category.planned, 0);
   const recurringSpent = activeMonth.transactions
-    .filter((transaction) => transaction.recurring)
+    .filter((transaction) => transaction.kind !== 'income' && transaction.recurring)
     .reduce((sum, transaction) => sum + transaction.amount, 0);
   const flexibleSpent = activeMonth.transactions
-    .filter((transaction) => !transaction.recurring)
+    .filter((transaction) => transaction.kind !== 'income' && !transaction.recurring)
     .reduce((sum, transaction) => sum + transaction.amount, 0);
   const topPlannedCategory =
     [...activeMonth.categories].sort((left, right) => right.planned - left.planned)[0] ?? null;
@@ -1784,10 +1799,10 @@ export default function App() {
         .slice(0, 3)
         .map((month) => {
           const monthFixedSpent = month.transactions
-            .filter((transaction) => transaction.recurring)
+            .filter((transaction) => transaction.kind !== 'income' && transaction.recurring)
             .reduce((sum, transaction) => sum + transaction.amount, 0);
           const monthFlexibleSpent = month.transactions
-            .filter((transaction) => !transaction.recurring)
+            .filter((transaction) => transaction.kind !== 'income' && !transaction.recurring)
             .reduce((sum, transaction) => sum + transaction.amount, 0);
           const monthSpent = monthFixedSpent + monthFlexibleSpent;
           const monthPlanned = getTotalPlanned(month);
@@ -1914,6 +1929,7 @@ export default function App() {
       monthLabel: getMonthLabel(activeMonth.id, localeTag),
       note: expenseNote.trim(),
       recentTransactions: [...activeMonth.transactions]
+        .filter((transaction) => transaction.kind !== 'income')
         .sort(
           (left, right) =>
             new Date(right.happenedAt).getTime() - new Date(left.happenedAt).getTime(),
@@ -2106,7 +2122,7 @@ export default function App() {
       months: sortedMonths.slice(0, 6).map((month) => {
         const monthSpent = getTotalSpent(month);
         const monthRecurringSpent = month.transactions
-          .filter((transaction) => transaction.recurring)
+          .filter((transaction) => transaction.kind !== 'income' && transaction.recurring)
           .reduce((sum, transaction) => sum + transaction.amount, 0);
         const monthPlanned = getTotalPlanned(month);
 
@@ -2116,7 +2132,7 @@ export default function App() {
           label: getMonthLabel(month.id, localeTag),
           planUsageRatio: monthPlanned > 0 ? monthSpent / monthPlanned : 0,
           recurringShareRatio: monthSpent > 0 ? monthRecurringSpent / monthSpent : 0,
-          transactionCount: month.transactions.length,
+          transactionCount: month.transactions.filter((transaction) => transaction.kind !== 'income').length,
         };
       }),
     };
@@ -2262,10 +2278,15 @@ export default function App() {
     [categorySummaries],
   );
   const visibleBudgetCategorySummaries = categorySummaries;
+  const homePlanSummaries = categorySummaries.slice(0, 6);
+  const hiddenHomePlanCategoryCount = Math.max(categorySummaries.length - homePlanSummaries.length, 0);
   const latestTransactionByCategoryId = useMemo(() => {
     const map = new Map<string, Transaction>();
 
     for (const transaction of sortTransactions(activeMonth.transactions, 'recent')) {
+      if (transaction.kind === 'income') {
+        continue;
+      }
       if (!map.has(transaction.categoryId)) {
         map.set(transaction.categoryId, transaction);
       }
@@ -2309,16 +2330,18 @@ export default function App() {
   const budgetHeroMessage = !hasActiveBudget
     ? previousBudgetMonth
       ? `Start fresh or pull in ${getMonthLabel(previousBudgetMonth.id, localeTag)} as a base.`
-      : 'Set the amount, add a few simple lanes, and you are off.'
+      : 'Set the amount, add a few categories, and you are ready.'
     : remaining < 0
       ? `${formatCurrency(Math.abs(remaining))} needs trimming to get back inside the month.`
       : overCount > 0
-        ? `${overCount} lane${overCount === 1 ? '' : 's'} need a quick look.`
+        ? `${overCount} categor${overCount === 1 ? 'y needs' : 'ies need'} a quick look.`
+        : forecastSnapshot.isCurrentMonth && forecastSnapshot.safeDailyBudget !== null
+          ? `${formatCurrency(forecastSnapshot.safeDailyBudget)} a day keeps this month on track.`
         : weeklySpendTotal > 0
           ? `${formatCurrency(weeklySpendTotal)} moved through the budget this week.`
           : 'A clean start. Nothing has landed yet this week.';
   const budgetHeroSupportLabel = hasActiveBudget
-    ? `${getMonthLabel(activeMonth.id, localeTag)} · ${categorySummaries.length} lane${categorySummaries.length === 1 ? '' : 's'}`
+    ? `${getMonthLabel(activeMonth.id, localeTag)} · ${categorySummaries.length} categor${categorySummaries.length === 1 ? 'y' : 'ies'}`
     : `${getMonthLabel(activeMonth.id, localeTag)} · build the month`;
   const activityScopeLabel =
     activityScope === 'today'
@@ -2326,38 +2349,15 @@ export default function App() {
       : activityScope === 'week'
         ? 'This week'
         : getMonthLabel(activeMonth.id, localeTag);
-  const recentExpenseTemplates = useMemo(() => {
-    const templates: Transaction[] = [];
-    const seenKeys = new Set<string>();
-
-    for (const transaction of sortTransactions(activeMonth.transactions, 'recent')) {
-      const key = [
-        transaction.categoryId,
-        transaction.subcategory ?? '',
-        transaction.accountId ?? '',
-        transaction.recurring ? '1' : '0',
-        transaction.note.trim().toLowerCase(),
-      ].join(':');
-
-      if (seenKeys.has(key)) {
-        continue;
-      }
-
-      seenKeys.add(key);
-      templates.push(transaction);
-
-      if (templates.length >= MAX_RECENT_EXPENSE_TEMPLATES) {
-        break;
-      }
-    }
-
-    return templates;
-  }, [activeMonth.transactions]);
   const recentExpenseCategoryIds = useMemo(() => {
     const ids: string[] = [];
     const seenIds = new Set<string>();
 
     for (const transaction of sortTransactions(activeMonth.transactions, 'recent')) {
+      if (transaction.kind === 'income') {
+        continue;
+      }
+
       if (seenIds.has(transaction.categoryId)) {
         continue;
       }
@@ -2379,6 +2379,14 @@ export default function App() {
         .filter((category): category is Category => Boolean(category)),
     [categoryMap, recentExpenseCategoryIds],
   );
+  const expenseCategoryChoices = useMemo(() => {
+    const recentIds = new Set(recentExpenseCategories.map((category) => category.id));
+    return [
+      ...recentExpenseCategories,
+      ...activeMonth.categories.filter((category) => !recentIds.has(category.id)),
+    ];
+  }, [activeMonth.categories, recentExpenseCategories]);
+
 
   const filteredTransactions = useMemo(() => {
     if (!activeMonth) {
@@ -2390,7 +2398,8 @@ export default function App() {
     return sortTransactions(
       activeMonth.transactions.filter((transaction) => {
         const category = categoryMap.get(transaction.categoryId);
-        const categoryName = category?.name.toLowerCase() ?? '';
+        const isIncome = transaction.kind === 'income';
+        const categoryName = isIncome ? 'income' : category?.name.toLowerCase() ?? '';
         const subcategoryName = transaction.subcategory?.toLowerCase() ?? '';
         const note = transaction.note.toLowerCase();
         const tone = categoryToneById.get(transaction.categoryId)?.tone ?? 'good';
@@ -2404,8 +2413,8 @@ export default function App() {
 
         const matchesFilter =
           transactionFilter === 'all' ||
-          (transactionFilter === 'over' && tone === 'alert') ||
-          (transactionFilter === 'healthy' && tone === 'good');
+          (!isIncome && transactionFilter === 'over' && tone === 'alert') ||
+          (!isIncome && transactionFilter === 'healthy' && tone === 'good');
         const matchesScope =
           activityScope === 'month'
             ? true
@@ -2441,7 +2450,17 @@ export default function App() {
   );
   const hiddenTransactionCount = Math.max(filteredTransactions.length - visibleTransactions.length, 0);
   const filteredTransactionTotal = useMemo(
-    () => filteredTransactions.reduce((sum, transaction) => sum + transaction.amount, 0),
+    () =>
+      filteredTransactions
+        .filter((transaction) => transaction.kind !== 'income')
+        .reduce((sum, transaction) => sum + transaction.amount, 0),
+    [filteredTransactions],
+  );
+  const filteredIncomeTotal = useMemo(
+    () =>
+      filteredTransactions
+        .filter((transaction) => transaction.kind === 'income')
+        .reduce((sum, transaction) => sum + transaction.amount, 0),
     [filteredTransactions],
   );
   const activityHeroMeta =
@@ -2545,7 +2564,7 @@ export default function App() {
     plan: {
       label: 'Plan',
       title: 'Plan',
-      subtitle: 'Amounts, categories, and goals.',
+      subtitle: 'Your monthly budget.',
     },
     insights: {
       label: 'Bigger picture',
@@ -2559,14 +2578,10 @@ export default function App() {
     },
   };
   const screenTabs: ScreenId[] = ['home', 'spend', 'plan', 'settings'];
-  const tabIcons: Partial<Record<ScreenId, string>> = {
-    home: '⌂',
-    spend: '↕',
-    plan: '▤',
-    settings: '⚙',
-  };
   const activeNavScreen: ScreenId =
     activeScreen === 'insights' ? 'settings' : activeScreen;
+  const showLegacyHome: boolean = false;
+  const showLegacyPlan: boolean = false;
   const isSignedIn = Boolean(authUser && !authUser.isAnonymous);
   const premiumStatus = purchaseSnapshot.premiumStatus;
   const purchaseState = purchaseSnapshot.purchaseState;
@@ -2829,6 +2844,7 @@ export default function App() {
     setExpenseAccountId(bankAccounts[0]?.id ?? '');
     setExpenseDate(getDefaultExpenseDate(activeMonth?.id ?? getMonthId(new Date())));
     setExpenseRecurring(false);
+    setExpenseContextCategoryId(null);
     setShowExpenseDetails(false);
     setExpenseAiSuggestion(null);
     setExpenseAiError('');
@@ -2836,6 +2852,61 @@ export default function App() {
     setShowExpenseDatePicker(false);
     setIsExpenseSheetOpen(false);
     setEditingTransactionId(null);
+  };
+
+  const resetIncomeForm = () => {
+    setIncomeAmount('');
+    setIncomeSource('');
+    setEditingIncomeId(null);
+    setIsIncomeSheetOpen(false);
+  };
+
+  const openIncomeCapture = (transaction?: Transaction) => {
+    setIsQuickAddMenuOpen(false);
+    if (transaction) {
+      setEditingIncomeId(transaction.id);
+      setIncomeAmount(String(transaction.amount));
+      setIncomeSource(transaction.note);
+    } else {
+      setEditingIncomeId(null);
+      setIncomeAmount('');
+      setIncomeSource('');
+    }
+    setIsIncomeSheetOpen(true);
+  };
+
+  const submitIncome = () => {
+    const amount = Number(incomeAmount);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return;
+    }
+
+    updateActiveMonth((month) => ({
+      ...month,
+      transactions: editingIncomeId
+        ? month.transactions.map((transaction) =>
+            transaction.id === editingIncomeId
+              ? { ...transaction, kind: 'income', amount, note: incomeSource.trim() }
+              : transaction,
+          )
+        : [
+            {
+              id: createId('txn'),
+              kind: 'income',
+              categoryId: INCOME_CATEGORY_ID,
+              amount,
+              note: incomeSource.trim(),
+              happenedAt: getDefaultExpenseDate(activeMonth.id).toISOString(),
+              recurring: false,
+            },
+            ...month.transactions,
+          ],
+    }));
+
+    resetIncomeForm();
+    showToast({ message: editingIncomeId ? 'Income updated.' : 'Income recorded.', tone: 'success' });
+    void triggerHaptic('success');
   };
 
   const openExpenseCapture = (
@@ -2852,10 +2923,22 @@ export default function App() {
 
     if (categoryId) {
       const category = activeMonth.categories.find((item) => item.id === categoryId);
+      setExpenseContextCategoryId(categoryId);
       setExpenseCategoryId(categoryId);
       setExpenseRecurring(category?.recurring ?? false);
       setExpenseSubcategory(resolveExpenseSubcategory(category, subcategory, { preferSingle: true }));
-      setShowExpenseDetails(Boolean(subcategory));
+      setShowExpenseDetails(false);
+    } else {
+      const preferredCategoryId =
+        recentExpenseCategoryIds[0] ??
+        (activeMonth.categories.some((category) => category.id === expenseCategoryId)
+          ? expenseCategoryId
+          : activeMonth.categories[0]?.id ?? '');
+      const preferredCategory = activeMonth.categories.find(
+        (category) => category.id === preferredCategoryId,
+      );
+      setExpenseCategoryId(preferredCategoryId);
+      setExpenseRecurring(preferredCategory?.recurring ?? false);
     }
 
     setIsExpenseSheetOpen(true);
@@ -2893,6 +2976,12 @@ export default function App() {
   };
 
   const repeatTransaction = (transaction: Transaction) => {
+    if (transaction.kind === 'income') {
+      openIncomeCapture({ ...transaction, id: '' });
+      setEditingIncomeId(null);
+      return;
+    }
+
     resetTransactionForm();
     applyExpenseTemplate(transaction);
     setIsExpenseSheetOpen(true);
@@ -2900,10 +2989,14 @@ export default function App() {
   };
 
   const openCategoryDetail = (categoryId: string) => {
+    setShowCategoryDetailSubcategoryInput(false);
+    setCategoryDetailSubcategoryName('');
     setSelectedCategoryDetailId(categoryId);
   };
 
   const closeCategoryDetail = () => {
+    setShowCategoryDetailSubcategoryInput(false);
+    setCategoryDetailSubcategoryName('');
     setSelectedCategoryDetailId(null);
   };
 
@@ -2932,6 +3025,16 @@ export default function App() {
     setEditingCategoryId(null);
     setInlineSubcategoryCategoryId(null);
     setInlineSubcategoryText('');
+  };
+
+  const openCategoryFromQuickAdd = () => {
+    setIsQuickAddMenuOpen(false);
+    resetCategoryForm();
+    setShowCategoryComposer(true);
+    setIsBudgetSetupActive(!hasActiveBudget);
+    setPlanSetupStep('categories');
+    navigateToScreen('plan');
+    requestAnimationFrame(() => budgetCategoryNameInputRef.current?.focus());
   };
 
   const resetGoalForm = () => {
@@ -3895,13 +3998,21 @@ export default function App() {
 
   const openBudgetBuilder = () => {
     resetCategoryForm();
-    setShowCategoryComposer(activeMonth.categories.length === 0);
+    setIsBudgetSetupActive(!hasActiveBudget);
+    setShowCategoryComposer(false);
     setPlanSetupStep(activeMonth.categories.length > 0 || monthlyLimitNumber > 0 ? 'categories' : suggestedPlanSetupStep);
     navigateToScreen('plan');
   };
 
+  const openManualCategoryEntry = () => {
+    resetCategoryForm();
+    setShowCategoryComposer(true);
+    requestAnimationFrame(() => budgetCategoryNameInputRef.current?.focus());
+  };
+
   const openPlanCategories = () => {
     resetCategoryForm();
+    setIsBudgetSetupActive(false);
     setShowCategoryComposer(activeMonth.categories.length === 0);
     setPlanSetupStep(monthlyLimitNumber > 0 ? 'categories' : 'limit');
     navigateToScreen('plan');
@@ -3935,6 +4046,7 @@ export default function App() {
     resetCategoryForm();
     resetGoalForm();
     resetAccountForm();
+    setIsBudgetSetupActive(false);
     setPlanSetupStep(
       getSuggestedBudgetSetupStep(
         Number(copiedMonth.monthlyLimit) || 0,
@@ -4027,6 +4139,7 @@ export default function App() {
             transaction.id === editingTransactionId
               ? {
                   ...transaction,
+                  kind: 'expense',
                   amount,
                   note: expenseNote.trim(),
                   categoryId: expenseCategoryId,
@@ -4040,6 +4153,7 @@ export default function App() {
         : [
             {
               id: createId('txn'),
+              kind: 'expense',
               amount,
               note: expenseNote.trim(),
               categoryId: expenseCategoryId,
@@ -4081,7 +4195,10 @@ export default function App() {
       return;
     }
 
-    Alert.alert('Delete expense?', 'This entry will be removed from the month history.', [
+    const transaction = activeMonth.transactions.find((item) => item.id === transactionId);
+    const entryLabel = transaction?.kind === 'income' ? 'income' : 'expense';
+
+    Alert.alert(`Delete ${entryLabel}?`, 'This entry will be removed from the month history.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -4091,7 +4208,7 @@ export default function App() {
             ...month,
             transactions: month.transactions.filter((transaction) => transaction.id !== transactionId),
           }));
-          showToast({ message: 'Expense removed.', tone: 'success' });
+          showToast({ message: `${entryLabel === 'income' ? 'Income' : 'Expense'} removed.`, tone: 'success' });
           void triggerHaptic('success');
         },
       },
@@ -4109,6 +4226,22 @@ export default function App() {
 
     if (!trimmedName || !Number.isFinite(planned) || planned <= 0) {
       return;
+    }
+
+    const duplicateCategory = activeMonth.categories.some(
+      (category) =>
+        category.id !== editingCategoryId &&
+        category.name.trim().toLowerCase() === trimmedName.toLowerCase(),
+    );
+
+    if (duplicateCategory) {
+      showToast({ message: `${trimmedName} is already in this budget.`, tone: 'error' });
+      void triggerHaptic('warning');
+      return;
+    }
+
+    if (activeMonth.categories.length === 0 && !editingCategoryId) {
+      setIsBudgetSetupActive(true);
     }
 
     updateActiveMonth((month) => ({
@@ -4186,6 +4319,22 @@ export default function App() {
     navigateToScreen('plan');
   };
 
+  const moveCategory = (categoryId: string, direction: -1 | 1) => {
+    updateActiveMonth((month) => {
+      const currentIndex = month.categories.findIndex((category) => category.id === categoryId);
+      const nextIndex = currentIndex + direction;
+
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= month.categories.length) {
+        return month;
+      }
+
+      const categories = [...month.categories];
+      [categories[currentIndex], categories[nextIndex]] = [categories[nextIndex], categories[currentIndex]];
+      return { ...month, categories };
+    });
+    void triggerHaptic('success');
+  };
+
   const applyCategoryPlanSuggestion = (amount: number) => {
     setCategoryPlanned(String(Number(amount.toFixed(2))));
   };
@@ -4220,6 +4369,38 @@ export default function App() {
     }));
 
     closeInlineSubcategoryEditor();
+  };
+
+  const addCategoryDetailSubcategory = () => {
+    if (!selectedCategoryDetail) {
+      return;
+    }
+
+    const nextName = categoryDetailSubcategoryName.trim();
+    if (!nextName) {
+      return;
+    }
+
+    if (
+      selectedCategoryDetail.subcategories.some(
+        (subcategory) => subcategory.toLowerCase() === nextName.toLowerCase(),
+      )
+    ) {
+      showToast({ message: 'That subcategory already exists.', tone: 'error' });
+      return;
+    }
+
+    updateActiveMonth((month) => ({
+      ...month,
+      categories: month.categories.map((category) =>
+        category.id === selectedCategoryDetail.id
+          ? { ...category, subcategories: [...category.subcategories, nextName] }
+          : category,
+      ),
+    }));
+    setCategoryDetailSubcategoryName('');
+    setShowCategoryDetailSubcategoryInput(false);
+    showToast({ message: 'Subcategory added.', tone: 'success' });
   };
 
   const duplicateCategoryDraft = (category: Category) => {
@@ -4265,6 +4446,42 @@ export default function App() {
         },
       ],
     );
+  };
+
+  const deleteActiveBudget = () => {
+    if (!activeMonth) {
+      return;
+    }
+
+    setIsDeleteBudgetPromptOpen(false);
+    updateActiveMonth((month) => ({
+      ...month,
+      monthlyLimit: '',
+      categories: [],
+      transactions: [],
+    }));
+    resetTransactionForm();
+    resetCategoryForm();
+    closeCategoryDetail();
+    setExpandedBudgetCategoryId(null);
+    setIsBudgetSetupActive(true);
+    setShowCategoryComposer(false);
+    setPlanSetupStep('limit');
+    showToast({ message: `${activeMonthName} budget deleted.`, tone: 'success' });
+    void triggerHaptic('success');
+  };
+
+  const finishBudgetSetup = () => {
+    if (monthlyLimitNumber <= 0 || activeMonth.categories.length === 0) {
+      return;
+    }
+
+    setIsBudgetSetupActive(false);
+    setShowCategoryComposer(false);
+    resetCategoryForm();
+    navigateToScreen('home');
+    showToast({ message: `${activeMonthName} budget is ready.`, tone: 'success' });
+    void triggerHaptic('success');
   };
 
   const customizePreset = (preset: (typeof quickPresets)[number]) => {
@@ -4642,7 +4859,7 @@ export default function App() {
         <View style={styles.emptyState}>
           <Text style={styles.emptyTitle}>Start with a category</Text>
           <Text style={styles.emptyText}>
-            Add your first budget lane in Plan, then come back here to log expenses against it.
+            Add your first category in Plan, then come back here to log expenses against it.
           </Text>
           <View style={styles.emptyActionRow}>
             <Button
@@ -4660,17 +4877,11 @@ export default function App() {
       );
     }
 
-    const showRecentExpenseTemplates =
-      !editingTransactionId &&
-      !expenseAmount.trim() &&
-      !expenseNote.trim() &&
-      recentExpenseTemplates.length > 0;
-
     return (
       <>
         <View style={styles.expenseFormStack}>
           <View style={styles.expenseAmountCard}>
-            <Text style={styles.fieldLabel}>Amount</Text>
+            <Text style={styles.expenseAmountLabel}>AMOUNT</Text>
             <View style={styles.expenseAmountRow}>
               <Text style={styles.expenseAmountCurrency}>{activeMonthCurrencyMarker}</Text>
               <TextInput
@@ -4678,16 +4889,16 @@ export default function App() {
                 value={expenseAmount}
                 onChangeText={setExpenseAmount}
                 keyboardType="numeric"
+                autoFocus={!editingTransactionId}
                 placeholder="0"
-                placeholderTextColor={currentTheme.placeholder}
+                placeholderTextColor={currentTheme.heroMuted}
                 selectionColor={currentTheme.accent}
               />
             </View>
-            <Text style={styles.expenseAmountHint}>tap a shortcut below or type any amount</Text>
           </View>
 
           <View style={styles.quickAmountRow}>
-            {[5, 10, 20, 50, 100].map((amount) => {
+            {[10, 20, 50, 100].map((amount) => {
               const selected = expenseAmount === String(amount);
 
               return (
@@ -4704,131 +4915,142 @@ export default function App() {
             })}
           </View>
 
-          {showRecentExpenseTemplates ? (
-            <View style={styles.expenseInlineRow}>
-              {recentExpenseTemplates.slice(0, 3).map((transaction) => {
-                const category = categoryMap.get(transaction.categoryId) ?? null;
-                const label = getTransactionDisplayTitle(transaction, category?.name);
+        </View>
+
+        {!expenseContextCategoryId ? (
+          <>
+            <View style={styles.expenseSectionHeader}>
+              <Text style={styles.fieldLabel}>Category</Text>
+              {recentExpenseCategories.length > 0 ? (
+                <Text style={styles.expenseSectionMeta}>Recent first</Text>
+              ) : null}
+            </View>
+            <View style={styles.chipWrap}>
+              {expenseCategoryChoices.map((category) => {
+                const theme = categoryThemes[category.themeId];
+                const isSuggested = expenseAiSuggestion?.categoryId === category.id;
+                const icon = getCategoryIcon(category.name);
+                const isEmojiIcon = icon.length > 1;
 
                 return (
-                  <Button
-                    key={transaction.id}
-                    variant="secondary"
-                    size="medium"
-                    onPress={() => applyExpenseTemplate(transaction)}
+                  <Pressable
+                    key={category.id}
+                    style={[
+                      styles.expenseCategoryChip,
+                      { backgroundColor: theme.chip },
+                      category.id === expenseCategoryId && styles.selectionChipActive,
+                      isSuggested && { borderWidth: 2, borderColor: currentTheme.accent },
+                    ]}
+                    onPress={() => selectExpenseCategory(category.id)}
                   >
-                    {`${label} · ${formatCurrency(transaction.amount)}`}
-                  </Button>
+                    <Text
+                      style={[
+                        styles.expenseCategoryChipText,
+                        { color: theme.chipText },
+                        category.id === expenseCategoryId && styles.selectionChipTextActive,
+                      ]}
+                    >
+                      {isEmojiIcon ? `${icon} ` : ''}{category.name}
+                    </Text>
+                  </Pressable>
                 );
               })}
             </View>
-          ) : null}
+          </>
+        ) : null}
 
-          <View style={[styles.fieldCard, styles.fieldWide]}>
-            <Text style={styles.fieldLabel}>Note</Text>
-            <TextInput
-              style={styles.fieldInput}
-              value={expenseNote}
-              onChangeText={setExpenseNote}
-              placeholder="Lunch, rent, fuel..."
-              placeholderTextColor={currentTheme.placeholder}
-              selectionColor={currentTheme.accent}
-            />
+        <View style={styles.expenseNoteField}>
+          <Text style={styles.fieldLabel}>Description <Text style={styles.optionalLabel}>Optional</Text></Text>
+          <TextInput
+            style={styles.fieldInput}
+            value={expenseNote}
+            onChangeText={setExpenseNote}
+            placeholder="Lunch, fuel, coffee..."
+            placeholderTextColor={currentTheme.placeholder}
+            selectionColor={currentTheme.accent}
+          />
+        </View>
+
+        <View style={styles.expenseEssentialsCard}>
+          <View style={styles.expenseEssentialsHeader}>
+            <Text style={styles.expenseEssentialsTitle}>Details</Text>
+            <Text style={styles.expenseEssentialsMeta}>Optional except date</Text>
           </View>
-        </View>
+          <Pressable style={styles.expenseDateRow} onPress={openExpenseDatePicker}>
+            <View style={styles.expenseDetailCopy}>
+              <Text style={styles.expenseDetailLabel}>Date</Text>
+              <Text style={styles.expenseDetailValue}>{formatExpenseDate(expenseDate, localeTag)}</Text>
+            </View>
+            <Text style={styles.expenseDetailChange}>Change</Text>
+          </Pressable>
 
-        <View style={styles.expenseSectionHeader}>
-          <Text style={styles.fieldLabel}>Category</Text>
-          {recentExpenseCategories.length > 0 ? (
-            <Text style={styles.expenseSectionMeta}>Recent first</Text>
+          {showExpenseDatePicker && Platform.OS === 'ios' ? (
+            <View style={styles.datePickerCard}>
+              <DateTimePicker
+                value={expenseDate}
+                mode="date"
+                display="spinner"
+                minimumDate={expenseDateBounds.start}
+                maximumDate={expenseDateBounds.end}
+                themeVariant="light"
+                textColor={currentTheme.text}
+                onChange={handleExpenseDateChange}
+              />
+            </View>
           ) : null}
-        </View>
-          <View style={styles.chipWrap}>
-            {activeMonth.categories.map((category) => {
-              const theme = categoryThemes[category.themeId];
-              const isSuggested = expenseAiSuggestion?.categoryId === category.id;
-              const icon = getCategoryIcon(category.name);
-              const isEmojiIcon = icon.length > 1;
 
-              return (
+          {selectedExpenseSubcategories.length > 0 ? (
+            <View style={styles.expenseSubcategoryBlock}>
+              <Text style={styles.expenseDetailLabel}>Subcategory</Text>
+              <View style={styles.chipWrap}>
                 <Pressable
-                  key={category.id}
-                  style={[
-                    styles.expenseCategoryChip,
-                    { backgroundColor: theme.chip },
-                    category.id === expenseCategoryId && styles.selectionChipActive,
-                    isSuggested && { borderWidth: 2, borderColor: currentTheme.accent },
-                  ]}
-                  onPress={() => selectExpenseCategory(category.id)}
+                  style={[styles.expenseOptionChip, !expenseSubcategory && styles.expenseOptionChipActive]}
+                  onPress={() => setExpenseSubcategory('')}
                 >
-                  <Text
-                    style={[
-                      styles.expenseCategoryChipText,
-                      { color: theme.chipText },
-                      category.id === expenseCategoryId && styles.selectionChipTextActive,
-                    ]}
-                  >
-                    {isEmojiIcon ? `${icon} ` : ''}{category.name}
+                  <Text style={[styles.expenseOptionChipText, !expenseSubcategory && styles.expenseOptionChipTextActive]}>
+                    None
                   </Text>
                 </Pressable>
-              );
-            })}
-          </View>
-
-        <Button
-          variant="primary"
-          size="large"
-          onPress={submitTransaction}
-          style={styles.expenseSubmitButton}
-        >
-          {editingTransactionId ? '✓ Update expense' : '＋ Log it'}
-        </Button>
+                {selectedExpenseSubcategories.map((subcategory) => {
+                  const selected = expenseSubcategory === subcategory;
+                  return (
+                    <Pressable
+                      key={subcategory}
+                      style={[styles.expenseOptionChip, selected && styles.expenseOptionChipActive]}
+                      onPress={() => setExpenseSubcategory(subcategory)}
+                    >
+                      <Text style={[styles.expenseOptionChipText, selected && styles.expenseOptionChipTextActive]}>
+                        {subcategory}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
+        </View>
 
         <View style={styles.expenseSecondaryRow}>
-          <Button
-            variant="ghost"
-            size="medium"
-            onPress={() => {
-              animateUi();
-              setShowExpenseDetails((current) => !current);
-            }}
-          >
-            {showExpenseDetails ? 'Hide details' : 'Add details'}
-          </Button>
-
-          {editingTransactionId ? (
-            <Button variant="ghost" size="medium" onPress={resetTransactionForm}>
-              Cancel
+            <Button
+              variant="ghost"
+              size="medium"
+              onPress={() => {
+                animateUi();
+                setShowExpenseDetails((current) => !current);
+              }}
+            >
+              {showExpenseDetails ? 'Hide more options' : 'More options'}
             </Button>
-          ) : null}
+
+            {editingTransactionId ? (
+              <Button variant="ghost" size="medium" onPress={resetTransactionForm}>
+                Cancel
+              </Button>
+            ) : null}
         </View>
 
         {showExpenseDetails ? (
           <View style={styles.expenseDetailsPanel}>
-            <Pressable
-              style={[styles.fieldCard, styles.fieldWide, styles.dateFieldCard]}
-              onPress={openExpenseDatePicker}
-            >
-              <Text style={styles.fieldLabel}>Date</Text>
-              <Text style={styles.fieldValue}>{formatExpenseDate(expenseDate, localeTag)}</Text>
-              <Text style={styles.fieldHint}>Inside {getMonthLabel(activeMonth.id, localeTag)}</Text>
-            </Pressable>
-
-            {showExpenseDatePicker && Platform.OS === 'ios' ? (
-              <View style={styles.datePickerCard}>
-                <DateTimePicker
-                  value={expenseDate}
-                  mode="date"
-                  display="spinner"
-                  minimumDate={expenseDateBounds.start}
-                  maximumDate={expenseDateBounds.end}
-                  themeVariant="light"
-                  textColor={currentTheme.text}
-                  onChange={handleExpenseDateChange}
-                />
-              </View>
-            ) : null}
-
             {bankAccounts.length > 0 ? (
               <>
                 <Text style={styles.fieldLabel}>Paid from</Text>
@@ -4852,39 +5074,6 @@ export default function App() {
               </>
             ) : null}
 
-            {selectedExpenseSubcategories.length > 0 ? (
-              <>
-                <Text style={styles.fieldLabel}>Subcategory</Text>
-                <View style={styles.chipWrap}>
-                  <Pressable
-                    style={[styles.filterChip, !expenseSubcategory && styles.filterChipActive]}
-                    onPress={() => setExpenseSubcategory('')}
-                  >
-                    <Text
-                      style={[styles.filterChipText, !expenseSubcategory && styles.filterChipTextActive]}
-                    >
-                      None
-                    </Text>
-                  </Pressable>
-                  {selectedExpenseSubcategories.map((subcategory) => {
-                    const selected = expenseSubcategory === subcategory;
-
-                    return (
-                      <Pressable
-                        key={subcategory}
-                        style={[styles.filterChip, selected && styles.filterChipActive]}
-                        onPress={() => setExpenseSubcategory(subcategory)}
-                      >
-                        <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
-                          {subcategory}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </>
-            ) : null}
-
             <View style={styles.switchRow}>
               <Text style={styles.switchLabel}>Repeat next month</Text>
               <Switch
@@ -4895,65 +5084,17 @@ export default function App() {
               />
             </View>
 
-            <View style={styles.sectionActionRow}>
-              <Button
-                variant="tertiary"
-                size="medium"
-                onPress={generateAiExpenseAssist}
-                disabled={
-                  hasPremiumAccess &&
-                  (expenseAiBusy || !expenseAiAssistPayload.note || expenseAiAssistPayload.amount <= 0)
-                }
-              >
-                {!hasPremiumAccess
-                  ? '🔒 Smart match'
-                  : expenseAiBusy
-                    ? 'Checking...'
-                    : 'Smart match'}
-              </Button>
-
-              {hasPremiumAccess && expenseAiSuggestion ? (
-                <Button variant="secondary" size="medium" onPress={applyExpenseAiSuggestion}>
-                  Use match
-                </Button>
-              ) : null}
-            </View>
-
-            {hasPremiumAccess && expenseAiSuggestion ? (
-              <View style={styles.suggestionCard}>
-                <View style={styles.compactHighlightRow}>
-                  {expenseAiSuggestedCategory ? (
-                    <View style={styles.compactHighlightChip}>
-                      <Text style={styles.compactHighlightText}>{expenseAiSuggestedCategory.name}</Text>
-                    </View>
-                  ) : null}
-                  {expenseAiSuggestedAccount ? (
-                    <View style={styles.compactHighlightChip}>
-                      <Text style={styles.compactHighlightText}>{expenseAiSuggestedAccount.name}</Text>
-                    </View>
-                  ) : null}
-                  <View style={styles.compactHighlightChip}>
-                    <Text style={styles.compactHighlightText}>
-                      {expenseAiSuggestion.recurring ? 'Repeat likely' : 'One-off likely'}
-                    </Text>
-                  </View>
-                  {expenseAiSuggestion.subcategoryHint ? (
-                    <View style={styles.compactHighlightChip}>
-                      <Text style={styles.compactHighlightText}>
-                        {expenseAiSuggestion.subcategoryHint}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-                <Text style={styles.suggestionText}>{expenseAiSuggestion.reason}</Text>
-              </View>
-            ) : null}
-
-            {hasPremiumAccess && expenseAiError ? (
-              <Text style={styles.aiReviewErrorText}>{expenseAiError}</Text>
-            ) : null}
           </View>
         ) : null}
+
+        <Button
+          variant="primary"
+          size="large"
+          onPress={submitTransaction}
+          style={styles.expenseSubmitButton}
+        >
+          {editingTransactionId ? 'Save changes' : 'Save expense'}
+        </Button>
       </>
     );
   };
@@ -5233,35 +5374,813 @@ export default function App() {
     );
   };
 
+  const renderEmptyPlanBuilder = () => {
+    const hasAmount = monthlyLimitNumber > 0;
+    const hasCategories = activeMonth.categories.length > 0;
+
+    return (
+      <View style={styles.budgetBuilderPage}>
+        <View style={styles.budgetBuilderIntro}>
+          <Text style={styles.budgetBuilderEyebrow}>BUILD YOUR MONTH</Text>
+          <Text style={styles.budgetBuilderTitle}>
+            {hasAmount || hasCategories ? `Continue your ${activeMonthName} budget` : `Plan ${activeMonthName}`}
+          </Text>
+          <Text style={styles.budgetBuilderSubtitle}>
+            Start with one amount, give the important parts a job, and leave the rest flexible.
+          </Text>
+
+          <View style={styles.budgetBuilderSteps}>
+            {[
+              { label: 'Amount', done: hasAmount },
+              { label: 'Categories', done: hasCategories },
+              { label: 'Ready', done: hasAmount && hasCategories },
+            ].map((step, index) => (
+              <View key={step.label} style={styles.budgetBuilderStep}>
+                <View style={[styles.budgetBuilderStepDot, step.done && styles.budgetBuilderStepDotDone]}>
+                  <Text style={[styles.budgetBuilderStepNumber, step.done && styles.budgetBuilderStepNumberDone]}>
+                    {step.done ? '✓' : index + 1}
+                  </Text>
+                </View>
+                <Text style={[styles.budgetBuilderStepLabel, step.done && styles.budgetBuilderStepLabelDone]}>
+                  {step.label}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.budgetBuilderAmountCard}>
+          <Text style={styles.budgetBuilderQuestion}>How much can you spend in {activeMonthName}?</Text>
+          <Text style={styles.budgetBuilderHint}>Include money available for expenses and savings.</Text>
+          <View style={styles.budgetBuilderAmountInputWrap}>
+            <Text style={styles.budgetBuilderCurrency}>{currentCurrencyCode}</Text>
+            <TextInput
+              style={styles.budgetBuilderAmountInput}
+              value={activeMonth.monthlyLimit}
+              onChangeText={updateMonthlyLimit}
+              keyboardType="numeric"
+              placeholder="0"
+              placeholderTextColor={currentTheme.placeholder}
+              selectionColor={currentTheme.accent}
+              accessibilityLabel="Monthly budget amount"
+              returnKeyType="next"
+              blurOnSubmit={false}
+              onSubmitEditing={() => {
+                if (monthlyLimitNumber > 0) {
+                  setShowCategoryComposer(true);
+                  requestAnimationFrame(() => budgetCategoryNameInputRef.current?.focus());
+                }
+              }}
+            />
+          </View>
+
+          {hasAmount ? (
+            <View style={styles.budgetBuilderBalanceRow}>
+              <Text style={styles.budgetBuilderBalanceLabel}>
+                {allocationDifference >= 0 ? 'Still available' : 'Planned too much'}
+              </Text>
+              <Text
+                style={[
+                  styles.budgetBuilderBalanceValue,
+                  allocationDifference < 0 && styles.budgetBuilderBalanceValueAlert,
+                ]}
+              >
+                {formatCurrency(Math.abs(allocationDifference))}
+              </Text>
+            </View>
+          ) : null}
+
+          {previousBudgetMonth && !hasCategories ? (
+            <Pressable style={styles.budgetBuilderCopyButton} onPress={copyPreviousBudgetIntoActiveMonth}>
+              <Text style={styles.budgetBuilderCopyText}>
+                Copy {getMonthLabel(previousBudgetMonth.id, localeTag)} budget
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {hasAmount ? (
+          <View style={styles.budgetBuilderCategorySection}>
+            <View>
+              <Text style={styles.settingsGroupLabel}>YOUR CATEGORIES</Text>
+              <Text style={styles.budgetBuilderSectionTitle}>Enter your categories</Text>
+              <Text style={styles.budgetBuilderSectionText}>
+                Add them one at a time with the amount you want to plan. You can change everything later.
+              </Text>
+            </View>
+
+            {activeMonth.categories.length > 0 ? (
+              <View style={styles.budgetBuilderCategoryList}>
+                {activeMonth.categories.map((category) => {
+                  const categoryTheme = categoryThemes[category.themeId];
+                  return (
+                    <View key={category.id} style={styles.budgetBuilderCategoryRow}>
+                      <View style={[styles.planCategoryIcon, { backgroundColor: categoryTheme.bubble }]}>
+                        <Text style={[styles.planCategoryIconText, { color: categoryTheme.bubbleText }]}>
+                          {getCategoryIcon(category.name)}
+                        </Text>
+                      </View>
+                      <Text style={styles.budgetBuilderCategoryName}>{category.name}</Text>
+                      <Text style={styles.budgetBuilderCategoryAmount}>{formatCurrency(category.planned)}</Text>
+                      <Pressable onPress={() => editCategory(category)} accessibilityLabel={`Edit ${category.name}`}>
+                        <Text style={styles.planTextAction}>Edit</Text>
+                      </Pressable>
+                      <Pressable onPress={() => deleteCategory(category.id)} accessibilityLabel={`Delete ${category.name}`}>
+                        <Text style={styles.planDeleteAction}>Delete</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            {showCategoryComposer || !hasCategories ? (
+              <View style={styles.budgetBuilderComposer}>
+                <View style={styles.planComposerHeader}>
+                  <Text style={styles.planComposerTitle}>{editingCategoryId ? 'Edit category' : 'Add a category'}</Text>
+                  {(activeMonth.categories.length > 0 || categoryName) ? (
+                    <Pressable
+                      onPress={() => {
+                        resetCategoryForm();
+                        setShowCategoryComposer(false);
+                      }}
+                    >
+                      <Text style={styles.planTextAction}>Close</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                <View style={styles.planComposerFields}>
+                  <View style={styles.planComposerFieldWide}>
+                    <Text style={styles.fieldLabel}>Category</Text>
+                    <TextInput
+                      ref={budgetCategoryNameInputRef}
+                      style={styles.planComposerInput}
+                      value={categoryName}
+                      onChangeText={handleCategoryNameChange}
+                      placeholder="e.g. Housing or Food"
+                      placeholderTextColor={currentTheme.placeholder}
+                      selectionColor={currentTheme.accent}
+                      returnKeyType="next"
+                      blurOnSubmit={false}
+                      onSubmitEditing={() => budgetCategoryAmountInputRef.current?.focus()}
+                    />
+                  </View>
+                  <View style={styles.planComposerFieldAmount}>
+                    <Text style={styles.fieldLabel}>Amount</Text>
+                    <TextInput
+                      ref={budgetCategoryAmountInputRef}
+                      style={styles.planComposerInput}
+                      value={categoryPlanned}
+                      onChangeText={setCategoryPlanned}
+                      keyboardType="numeric"
+                      placeholder="250"
+                      placeholderTextColor={currentTheme.placeholder}
+                      selectionColor={currentTheme.accent}
+                      returnKeyType="done"
+                      onSubmitEditing={() => {
+                        if (categoryName.trim() && categoryDraftIsValid) {
+                          submitCategory();
+                        }
+                      }}
+                    />
+                  </View>
+                </View>
+                {projectedAllocationDelta !== null && categoryDraftIsValid ? (
+                  <Text style={styles.budgetBuilderDraftBalance}>
+                    {projectedAllocationDelta >= 0
+                      ? `${formatCurrency(projectedAllocationDelta)} will remain available`
+                      : `${formatCurrency(Math.abs(projectedAllocationDelta))} over your monthly amount`}
+                  </Text>
+                ) : null}
+                <Pressable
+                  style={[
+                    styles.primaryButton,
+                    (!categoryName.trim() || !categoryDraftIsValid) && styles.buttonDisabled,
+                  ]}
+                  onPress={() => submitCategory()}
+                  disabled={!categoryName.trim() || !categoryDraftIsValid}
+                >
+                  <Text style={styles.primaryButtonText}>{editingCategoryId ? 'Save category' : 'Add to budget'}</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {hasCategories && !showCategoryComposer ? (
+              <Pressable style={styles.budgetBuilderAddAnotherButton} onPress={openManualCategoryEntry}>
+                <Text style={styles.budgetBuilderAddAnotherText}>＋ Add another category</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : (
+          <View style={styles.budgetBuilderLockedHint}>
+            <Text style={styles.budgetBuilderLockedIcon}>↓</Text>
+            <Text style={styles.budgetBuilderLockedText}>Enter the monthly amount to unlock category setup.</Text>
+          </View>
+        )}
+
+        <View style={styles.budgetBuilderFinishArea}>
+          <Text style={styles.budgetBuilderAutosave}>Your progress is saved as you go.</Text>
+          <Pressable
+            style={[
+              styles.budgetBuilderFinishButton,
+              (!hasAmount || !hasCategories) && styles.buttonDisabled,
+            ]}
+            onPress={finishBudgetSetup}
+            disabled={!hasAmount || !hasCategories}
+            accessibilityRole="button"
+          >
+            <Text style={styles.budgetBuilderFinishText}>
+              {hasCategories ? 'Create my budget' : 'Add at least one category'}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  };
+
+  const renderSimplePlanScreen = () => !hasActiveBudget || isBudgetSetupActive ? renderEmptyPlanBuilder() : (
+    <View style={styles.simplePlanPage}>
+      <View style={styles.planAmountPanel}>
+        <View style={styles.planAmountHeader}>
+          <View>
+            <Text style={styles.settingsGroupLabel}>MONTHLY BUDGET</Text>
+            <Text style={styles.planAmountMonth}>{activeMonthName}</Text>
+          </View>
+          <View style={styles.planAmountInputWrap}>
+            <Text style={styles.planAmountCurrency}>{currentCurrencyCode}</Text>
+            <TextInput
+              style={styles.planAmountInput}
+              value={activeMonth.monthlyLimit}
+              onChangeText={updateMonthlyLimit}
+              keyboardType="numeric"
+              placeholder="0"
+              placeholderTextColor={currentTheme.placeholder}
+              selectionColor={currentTheme.accent}
+              accessibilityLabel="Monthly budget amount"
+            />
+          </View>
+        </View>
+
+        <View style={styles.allocationProgressBar}>
+          <View
+            style={[
+              styles.allocationProgressFill,
+              {
+                width: `${Math.round(clamp(allocationProgress) * 100)}%`,
+                backgroundColor: allocationDifference < 0
+                  ? currentTheme.progressAlert
+                  : currentTheme.progressGood,
+              },
+            ]}
+          />
+        </View>
+        <View style={styles.planAmountMetaRow}>
+          <Text style={styles.planAmountMeta}>{formatCurrency(totalPlanned)} planned</Text>
+          <Text style={styles.planAmountMeta}>
+            {allocationDifference < 0
+              ? `${formatCurrency(Math.abs(allocationDifference))} planned too much`
+              : `${formatCurrency(allocationDifference)} still available`}
+          </Text>
+        </View>
+
+        {monthlyLimitNumber > 0 || activeMonth.categories.length > 0 || activeMonth.transactions.length > 0 ? (
+          <Pressable
+            style={styles.planDeleteBudgetButton}
+            onPress={() => setIsDeleteBudgetPromptOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${activeMonthName} budget`}
+          >
+            <Text style={styles.planDeleteBudgetText}>Delete {activeMonthName} budget</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      <View style={styles.planListHeader}>
+        <View>
+          <Text style={styles.settingsGroupLabel}>CATEGORIES</Text>
+          <Text style={styles.planListTitle}>{categorySummaries.length} in this month</Text>
+        </View>
+        {activeMonth.categories.length > 0 && !showCategoryComposer ? (
+          <View style={styles.planListHeaderActions}>
+            <Pressable
+              style={styles.planReorderButton}
+              onPress={() => setIsReorderingCategories((current) => !current)}
+            >
+              <Text style={styles.planReorderButtonText}>{isReorderingCategories ? 'Done' : 'Reorder'}</Text>
+            </Pressable>
+            {!isReorderingCategories ? (
+              <Pressable
+                style={styles.planAddButton}
+                onPress={() => {
+                  resetCategoryForm();
+                  setShowCategoryComposer(true);
+                }}
+              >
+                <Text style={styles.planAddButtonText}>＋ Add</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.planCategoryList}>
+        {categorySummaries.length === 0 ? (
+          <View style={styles.simpleEmptyState}>
+            <Text style={styles.emptyTitle}>No categories yet</Text>
+            <Text style={styles.emptyText}>Create a few clear spending limits for the month.</Text>
+          </View>
+        ) : (
+          visiblePlanCategorySummaries.map((summary, index) => {
+            const theme = categoryThemes[summary.category.themeId];
+            return (
+              <View key={summary.category.id} style={styles.planCategoryRow}>
+                <View style={styles.planCategoryMainRow}>
+                  <View style={[styles.planCategoryIcon, { backgroundColor: theme.bubble }]}>
+                    <Text style={[styles.planCategoryIconText, { color: theme.bubbleText }]}>
+                      {getCategoryIcon(summary.category.name)}
+                    </Text>
+                  </View>
+                  <View style={styles.planCategoryCopy}>
+                    <Text style={styles.planCategoryName}>{summary.category.name}</Text>
+                    <Text style={styles.planCategoryMeta}>
+                      {formatCurrency(summary.spent)} spent · {formatCurrency(summary.left)} left
+                    </Text>
+                  </View>
+                  <Text style={styles.planCategoryPlanned}>{formatCurrency(summary.category.planned)}</Text>
+                </View>
+
+                <View style={[styles.categoryTrack, { backgroundColor: currentTheme.progressTrack }]}>
+                  <View
+                    style={[
+                      styles.categoryFill,
+                      {
+                        backgroundColor:
+                          summary.tone === 'alert'
+                            ? currentTheme.progressAlert
+                            : summary.tone === 'warning'
+                              ? currentTheme.progressWarning
+                              : currentTheme.progressGood,
+                        width: `${Math.round(clamp(summary.ratio) * 100)}%`,
+                      },
+                    ]}
+                  />
+                </View>
+
+                <View style={styles.planCategoryActions}>
+                  <Text style={styles.planCategoryBucket}>
+                    {categoryBucketMeta[summary.category.bucket].label}
+                    {summary.category.recurring ? ' · repeats monthly' : ''}
+                  </Text>
+                  {isReorderingCategories ? (
+                    <View style={styles.planReorderControls}>
+                      <Pressable
+                        style={[styles.planReorderControl, index === 0 && styles.buttonDisabled]}
+                        onPress={() => moveCategory(summary.category.id, -1)}
+                        disabled={index === 0}
+                        accessibilityLabel={`Move ${summary.category.name} up`}
+                      >
+                        <Text style={styles.planReorderControlText}>↑</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[
+                          styles.planReorderControl,
+                          index === visiblePlanCategorySummaries.length - 1 && styles.buttonDisabled,
+                        ]}
+                        onPress={() => moveCategory(summary.category.id, 1)}
+                        disabled={index === visiblePlanCategorySummaries.length - 1}
+                        accessibilityLabel={`Move ${summary.category.name} down`}
+                      >
+                        <Text style={styles.planReorderControlText}>↓</Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <>
+                      <Pressable onPress={() => editCategory(summary.category)}>
+                        <Text style={styles.planTextAction}>Edit</Text>
+                      </Pressable>
+                      <Pressable onPress={() => deleteCategory(summary.category.id)}>
+                        <Text style={styles.planDeleteAction}>Delete</Text>
+                      </Pressable>
+                    </>
+                  )}
+                </View>
+              </View>
+            );
+          })
+        )}
+      </View>
+
+      {showCategoryComposer || activeMonth.categories.length === 0 ? (
+        <View style={styles.planComposer}>
+          <View style={styles.planComposerHeader}>
+            <Text style={styles.planComposerTitle}>
+              {editingCategoryId ? 'Edit category' : 'New category'}
+            </Text>
+            {activeMonth.categories.length > 0 ? (
+              <Pressable
+                onPress={() => {
+                  resetCategoryForm();
+                  setShowCategoryComposer(false);
+                }}
+              >
+                <Text style={styles.planTextAction}>Close</Text>
+              </Pressable>
+            ) : null}
+          </View>
+
+          {activeMonth.categories.length === 0 ? (
+            <View style={styles.planPresetRow}>
+              {quickStartPresets.map((preset) => (
+                <Pressable
+                  key={preset.name}
+                  style={styles.planPresetButton}
+                  onPress={() => customizePreset(preset)}
+                >
+                  <Text style={styles.planPresetText}>{preset.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+
+          <View style={styles.planComposerFields}>
+            <View style={styles.planComposerFieldWide}>
+              <Text style={styles.fieldLabel}>Name</Text>
+              <TextInput
+                style={styles.planComposerInput}
+                value={categoryName}
+                onChangeText={handleCategoryNameChange}
+                placeholder="Groceries"
+                placeholderTextColor={currentTheme.placeholder}
+                selectionColor={currentTheme.accent}
+              />
+            </View>
+            <View style={styles.planComposerFieldAmount}>
+              <Text style={styles.fieldLabel}>Amount</Text>
+              <TextInput
+                style={styles.planComposerInput}
+                value={categoryPlanned}
+                onChangeText={setCategoryPlanned}
+                keyboardType="numeric"
+                placeholder="250"
+                placeholderTextColor={currentTheme.placeholder}
+                selectionColor={currentTheme.accent}
+              />
+            </View>
+          </View>
+
+          <Pressable
+            style={styles.planOptionsButton}
+            onPress={() => setShowCategoryAdvanced((current) => !current)}
+          >
+            <Text style={styles.planTextAction}>
+              {showCategoryAdvanced ? 'Hide options' : 'More options'}
+            </Text>
+          </Pressable>
+
+          {showCategoryAdvanced ? (
+            <View style={styles.planOptionsPanel}>
+              <Text style={styles.fieldLabel}>Bucket</Text>
+              <View style={styles.chipWrap}>
+                {categoryBucketOrder.map((bucket) => (
+                  <Pressable
+                    key={bucket}
+                    style={[styles.filterChip, categoryBucket === bucket && styles.filterChipActive]}
+                    onPress={() => setManualCategoryBucket(bucket)}
+                  >
+                    <Text style={[styles.filterChipText, categoryBucket === bucket && styles.filterChipTextActive]}>
+                      {categoryBucketMeta[bucket].label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.fieldLabel}>Subcategories</Text>
+              <TextInput
+                style={styles.planComposerInput}
+                value={categorySubcategoriesText}
+                onChangeText={setCategorySubcategoriesText}
+                placeholder="Optional, separated by commas"
+                placeholderTextColor={currentTheme.placeholder}
+                selectionColor={currentTheme.accent}
+              />
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>Repeat next month</Text>
+                <Switch
+                  value={categoryRecurring}
+                  onValueChange={setCategoryRecurring}
+                  trackColor={{ false: currentTheme.switchOff, true: currentTheme.switchOn }}
+                  thumbColor={categoryRecurring ? currentTheme.switchThumbOn : currentTheme.switchThumbOff}
+                />
+              </View>
+            </View>
+          ) : null}
+
+          <Pressable style={styles.primaryButton} onPress={() => submitCategory()}>
+            <Text style={styles.primaryButtonText}>
+              {editingCategoryId ? 'Save category' : 'Add category'}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+    </View>
+  );
+
+  const renderTabIcon = (screenId: ScreenId, active: boolean) => {
+    const iconColor = active ? currentTheme.accent : currentTheme.textSoft;
+    const lineWidth = active ? 2 : 1.6;
+
+    if (screenId === 'home') {
+      return (
+        <View style={styles.navIconCanvas}>
+          <View style={[styles.navWallet, { borderColor: iconColor, borderWidth: lineWidth }]}>
+            <View style={[styles.navWalletFlap, { borderColor: iconColor, borderWidth: lineWidth }]}>
+              <View style={[styles.navWalletDot, { backgroundColor: iconColor }]} />
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    if (screenId === 'spend') {
+      return (
+        <View style={styles.navIconCanvas}>
+          <View style={[styles.navReceipt, { borderColor: iconColor, borderWidth: lineWidth }]}>
+            <View style={[styles.navReceiptLine, { backgroundColor: iconColor }]} />
+            <View style={[styles.navReceiptLineShort, { backgroundColor: iconColor }]} />
+          </View>
+        </View>
+      );
+    }
+
+    if (screenId === 'plan') {
+      return (
+        <View style={styles.navIconCanvas}>
+          <View style={[styles.navPie, { borderColor: iconColor, borderWidth: lineWidth }]}>
+            <View style={[styles.navPieVertical, { backgroundColor: iconColor }]} />
+            <View style={[styles.navPieHorizontal, { backgroundColor: iconColor }]} />
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.navIconCanvas}>
+        {[4, 12, 7].map((left, index) => (
+          <View key={`${left}-${index}`} style={styles.navSliderRow}>
+            <View style={[styles.navSliderLine, { backgroundColor: iconColor }]} />
+            <View style={[styles.navSliderKnob, { backgroundColor: iconColor, left }]} />
+          </View>
+        ))}
+      </View>
+    );
+  };
+
+  const renderSimpleHomeScreen = () => {
+    return (
+      <View style={styles.homePulsePage}>
+        <View style={styles.homePulseTopRow}>
+          <View>
+            <Text style={styles.settingsGroupLabel}>BUDGET PULSE</Text>
+            <Text style={styles.homePulseMonth}>{getMonthLabel(activeMonth.id, localeTag)}</Text>
+          </View>
+          {hasActiveBudget ? (
+            <Pressable onPress={openPlanCategories} style={styles.homePlanLink}>
+              <Text style={styles.homePlanLinkText}>View plan</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {hasActiveBudget ? (
+          <>
+            <View style={styles.homePulseCard}>
+              <Text style={styles.homePulseEyebrow}>
+                {remaining >= 0 ? 'LEFT THIS MONTH' : 'OVER BUDGET THIS MONTH'}
+              </Text>
+              <Text style={styles.homePulseAmount}>{formatCurrency(Math.abs(remaining))}</Text>
+              <Text style={styles.homePulseSupport}>
+                {formatCurrency(totalSpent)} spent of {formatCurrency(monthlyLimitNumber)}
+              </Text>
+
+              <View style={styles.homePulseTrack}>
+                <View
+                  style={[
+                    styles.homePulseFill,
+                    {
+                      width: `${Math.round(clamp(monthlyProgress) * 100)}%`,
+                      backgroundColor:
+                        monthlyProgress >= 1
+                          ? currentTheme.progressAlert
+                          : monthlyProgress >= 0.82
+                            ? currentTheme.progressWarning
+                            : currentTheme.heroText,
+                    },
+                  ]}
+                />
+              </View>
+
+              <View style={styles.homePulseBottomRow}>
+                <View>
+                  <Text style={styles.homePulseStatLabel}>PLANNED IN CATEGORIES</Text>
+                  <Text style={styles.homePulseStatValue}>{formatCurrency(totalPlanned)}</Text>
+                </View>
+                <Pressable
+                  style={styles.homePulseCompactAction}
+                  onPress={() => openExpenseCapture(undefined, null)}
+                >
+                  <Text style={styles.homePulseCompactActionText}>＋ Add expense</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.homePlanSection}>
+              <View style={styles.homeSectionHeadingRow}>
+                <View>
+                  <Text style={styles.settingsGroupLabel}>YOUR PLAN</Text>
+                  <Text style={styles.homeSectionTitle}>Categories at a glance</Text>
+                </View>
+                <Pressable onPress={openPlanCategories}>
+                  <Text style={styles.homePlanLinkText}>Edit plan</Text>
+                </Pressable>
+              </View>
+
+              <View style={styles.homePlanList}>
+                {homePlanSummaries.map((summary) => {
+                  const categoryTheme = categoryThemes[summary.category.themeId];
+                  return (
+                    <Pressable
+                      key={summary.category.id}
+                      style={styles.homePlanRow}
+                      onPress={() => openCategoryDetail(summary.category.id)}
+                    >
+                      <View style={styles.planCategoryMainRow}>
+                        <View style={[styles.planCategoryIcon, { backgroundColor: categoryTheme.bubble }]}>
+                          <Text style={[styles.planCategoryIconText, { color: categoryTheme.bubbleText }]}>
+                            {getCategoryIcon(summary.category.name)}
+                          </Text>
+                        </View>
+                        <View style={styles.planCategoryCopy}>
+                          <Text style={styles.planCategoryName}>{summary.category.name}</Text>
+                          <Text style={styles.planCategoryMeta}>
+                            {formatCurrency(summary.spent)} of{' '}
+                            {formatCurrency(summary.category.planned)} spent
+                          </Text>
+                        </View>
+                        <View style={styles.homePlanRemaining}>
+                          <Text
+                            style={[
+                              styles.homePlanRemainingValue,
+                              summary.left < 0 && styles.homePlanRemainingAlert,
+                            ]}
+                          >
+                            {formatCurrency(Math.abs(summary.left))}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.homePlanRemainingLabel,
+                              summary.left < 0 && styles.homePlanRemainingAlert,
+                            ]}
+                          >
+                            {summary.left < 0 ? 'over' : 'remaining'}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={[styles.homePlanTrack, { backgroundColor: currentTheme.progressTrack }]}>
+                        <View
+                          style={[
+                            styles.homePlanFill,
+                            {
+                              backgroundColor:
+                                summary.tone === 'alert'
+                                  ? currentTheme.progressAlert
+                                  : summary.tone === 'warning'
+                                    ? currentTheme.progressWarning
+                                    : currentTheme.progressGood,
+                              width: `${Math.round(clamp(summary.ratio) * 100)}%`,
+                            },
+                          ]}
+                        />
+                      </View>
+                    </Pressable>
+                  );
+                })}
+                {hiddenHomePlanCategoryCount > 0 ? (
+                  <Pressable style={styles.homePlanMoreRow} onPress={openPlanCategories}>
+                    <Text style={styles.homePlanMoreText}>
+                      +{hiddenHomePlanCategoryCount} more{' '}
+                      {hiddenHomePlanCategoryCount === 1 ? 'category' : 'categories'} in Plan
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          </>
+        ) : (
+          <View style={styles.homeStartCard}>
+            <View style={styles.homeStartVisual}>
+              <View style={styles.homeStartCoinBack} />
+              <View style={styles.homeStartCoinFront}>
+                <Text style={styles.homeStartCoinText}>{activeMonthCurrencyMarker}</Text>
+              </View>
+              <View style={styles.homeStartSpark} />
+            </View>
+            <Text style={styles.homePulseEyebrow}>NO BUDGET YET</Text>
+            <Text style={styles.homeStartTitle}>
+              {monthlyLimitNumber > 0 ? `Finish planning ${activeMonthName}.` : `Let’s plan ${activeMonthName}.`}
+            </Text>
+            <Text style={styles.homeStartText}>
+              One monthly amount and a few categories are enough to get started.
+            </Text>
+            <View style={styles.homeStartMiniSteps}>
+              <Text style={styles.homeStartMiniStep}>1  Amount</Text>
+              <Text style={styles.homeStartMiniStep}>2  Categories</Text>
+              <Text style={styles.homeStartMiniStep}>3  Ready</Text>
+            </View>
+            <Pressable style={styles.homePulseAction} onPress={openBudgetBuilder}>
+              <Text style={styles.homePulseActionText}>
+                {monthlyLimitNumber > 0 ? 'Continue budget' : `Create ${activeMonthName} budget`}
+              </Text>
+            </Pressable>
+            {previousBudgetMonth ? (
+              <Pressable style={styles.homeStartCopyButton} onPress={copyPreviousBudgetIntoActiveMonth}>
+                <Text style={styles.homeStartCopyText}>
+                  Copy {getMonthLabel(previousBudgetMonth.id, localeTag)} budget
+                </Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.homeStartTime}>Usually takes less than a minute.</Text>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   const renderSettingsScreen = () => (
     <>
       {activeSettingsSection === 'overview' ? (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Preferences</Text>
-          <Text style={styles.sectionSubtitle}>Only the settings you are likely to need.</Text>
-
-          <View style={styles.moreShortcutGrid}>
-            <Pressable style={styles.moreShortcutCard} onPress={() => activateSettingsSection('appearance')}>
-              <Text style={styles.moreShortcutTitle}>Theme</Text>
-              <Text style={styles.moreShortcutMeta}>{currentTheme.name}</Text>
+        <View style={styles.settingsPage}>
+          <Text style={styles.settingsGroupLabel}>GENERAL</Text>
+          <View style={styles.settingsGroup}>
+            <Pressable style={styles.settingsRow} onPress={() => activateSettingsSection('appearance')}>
+              <Text style={styles.settingsRowTitle}>Appearance</Text>
+              <View style={styles.settingsRowTrailing}>
+                <Text style={styles.settingsRowValue}>{currentTheme.name}</Text>
+                <Text style={styles.settingsChevron}>›</Text>
+              </View>
             </Pressable>
-            <Pressable style={styles.moreShortcutCard} onPress={() => activateSettingsSection('locale')}>
-              <Text style={styles.moreShortcutTitle}>Currency and language</Text>
-              <Text style={styles.moreShortcutMeta}>{currentCurrencyCode} · {currentLanguageCode.toUpperCase()}</Text>
+            <Pressable style={styles.settingsRow} onPress={() => activateSettingsSection('locale')}>
+              <Text style={styles.settingsRowTitle}>Currency & language</Text>
+              <View style={styles.settingsRowTrailing}>
+                <Text style={styles.settingsRowValue}>{currentCurrencyCode} · {currentLanguageCode.toUpperCase()}</Text>
+                <Text style={styles.settingsChevron}>›</Text>
+              </View>
             </Pressable>
-            <Pressable style={styles.moreShortcutCard} onPress={() => activateSettingsSection('accounts')}>
-              <Text style={styles.moreShortcutTitle}>Accounts</Text>
-              <Text style={styles.moreShortcutMeta}>{bankAccounts.length} added</Text>
-            </Pressable>
-            <Pressable style={styles.moreShortcutCard} onPress={() => activateSettingsSection('cloud')}>
-              <Text style={styles.moreShortcutTitle}>Backup and recovery</Text>
-              <Text style={styles.moreShortcutMeta}>{backupStateMeta}</Text>
-            </Pressable>
-            <Pressable style={styles.moreShortcutCard} onPress={() => activateSettingsSection('data')}>
-              <Text style={styles.moreShortcutTitle}>Import and export</Text>
-              <Text style={styles.moreShortcutMeta}>Backup files and reports.</Text>
+            <Pressable style={[styles.settingsRow, styles.settingsRowLast]} onPress={() => activateSettingsSection('accounts')}>
+              <Text style={styles.settingsRowTitle}>Accounts</Text>
+              <View style={styles.settingsRowTrailing}>
+                <Text style={styles.settingsRowValue}>{bankAccounts.length || 'None'}</Text>
+                <Text style={styles.settingsChevron}>›</Text>
+              </View>
             </Pressable>
           </View>
+
+          <Text style={styles.settingsGroupLabel}>DATA</Text>
+          <View style={styles.settingsGroup}>
+            <Pressable style={styles.settingsRow} onPress={() => activateSettingsSection('cloud')}>
+              <Text style={styles.settingsRowTitle}>Backup</Text>
+              <View style={styles.settingsRowTrailing}>
+                <Text style={styles.settingsRowValue}>{cloudBackupEnabled ? 'On' : 'Off'}</Text>
+                <Text style={styles.settingsChevron}>›</Text>
+              </View>
+            </Pressable>
+            <Pressable style={[styles.settingsRow, styles.settingsRowLast]} onPress={() => activateSettingsSection('data')}>
+              <Text style={styles.settingsRowTitle}>Import or export</Text>
+              <Text style={styles.settingsChevron}>›</Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.settingsGroupLabel}>ACCOUNT</Text>
+          <View style={styles.settingsGroup}>
+            <Pressable style={styles.settingsRow} onPress={() => activateSettingsSection('cloud')}>
+              <Text style={styles.settingsRowTitle}>{isSignedIn ? 'Account' : 'Sign in'}</Text>
+              <View style={styles.settingsRowTrailing}>
+                {isSignedIn ? <Text style={styles.settingsRowValue}>{authUser?.email}</Text> : null}
+                <Text style={styles.settingsChevron}>›</Text>
+              </View>
+            </Pressable>
+            <Pressable
+              style={[styles.settingsRow, styles.settingsRowLast]}
+              onPress={() => openPremiumPaywall('settings_upgrade')}
+            >
+              <Text style={styles.settingsRowTitle}>Budget Buddy Premium</Text>
+              <View style={styles.settingsRowTrailing}>
+                <Text style={styles.settingsRowValue}>{hasPremiumAccess ? 'Active' : 'Optional'}</Text>
+                <Text style={styles.settingsChevron}>›</Text>
+              </View>
+            </Pressable>
+          </View>
+
+          <Text style={styles.settingsVersion}>Budget Buddy · Version 1.0.0</Text>
         </View>
       ) : (
         <Pressable style={styles.settingsBackButton} onPress={() => activateSettingsSection('overview')}>
@@ -5986,7 +6905,8 @@ export default function App() {
         showsVerticalScrollIndicator={false}
       >
         {activeScreen === 'home' ? (
-          <>
+          showLegacyHome ? (
+            <>
             <View style={[styles.heroCard, styles.budgetStage, { minHeight: budgetStageMinHeight }]}>
               <View style={styles.heroTopRow}>
                 <View style={styles.monthChip}>
@@ -6081,7 +7001,7 @@ export default function App() {
                   <View style={styles.budgetStageLead}>
                     <View style={styles.sectionHeaderCopy}>
                       <Text style={styles.heroTitle}>Start this month</Text>
-                      <Text style={styles.heroSubtitle}>Set the amount. Add a few lanes. Start logging.</Text>
+                      <Text style={styles.heroSubtitle}>Set the amount. Add a few categories. Start logging.</Text>
                     </View>
                   </View>
 
@@ -6140,7 +7060,7 @@ export default function App() {
               <View style={styles.homeSection}>
                 <View style={styles.sectionHeader}>
                   <View style={styles.sectionHeaderCopy}>
-                    <Text style={styles.sectionTitle}>Budget lanes</Text>
+                    <Text style={styles.sectionTitle}>Categories</Text>
                     <Text style={styles.sectionSubtitle}>See what is spent and what is still available.</Text>
                   </View>
                 </View>
@@ -6174,7 +7094,7 @@ export default function App() {
                       summary.category.subcategories.length > 0
                         ? `${summary.category.subcategories.length} sub${summary.category.subcategories.length === 1 ? '' : 's'}`
                         : null,
-                      summary.category.recurring && summary.thisWeek <= 0 ? 'Fixed' : null,
+                      summary.category.recurring && summary.thisWeek <= 0 ? 'Repeats' : null,
                     ].filter(Boolean);
                     const statusLabel =
                       summary.tone === 'alert'
@@ -6212,8 +7132,13 @@ export default function App() {
                             textMuted: currentTheme.textMuted,
                             bubble: theme.bubble,
                             bubbleText: theme.bubbleText,
-                            track: theme.track,
-                            fill: theme.fill,
+                            track: currentTheme.progressTrack,
+                            fill:
+                              summary.tone === 'alert'
+                                ? currentTheme.progressAlert
+                                : summary.tone === 'warning'
+                                  ? currentTheme.progressWarning
+                                  : currentTheme.progressGood,
                             accentSoft: currentTheme.accentSoft,
                             accentBorder: currentTheme.accentBorder,
                             accentText: currentTheme.accentText,
@@ -6314,7 +7239,10 @@ export default function App() {
                 </Text>
               </View>
             )}
-          </>
+            </>
+          ) : (
+            renderSimpleHomeScreen()
+          )
         ) : (
           <View style={styles.screenHeader}>
             <View style={styles.sectionHeader}>
@@ -6333,6 +7261,32 @@ export default function App() {
         )}
 
         {activeScreen === 'spend' ? (
+          !hasActiveBudget ? (
+            <View style={styles.noBudgetTransactionsPage}>
+              <View style={styles.noBudgetTransactionsIcon}>
+                <View style={styles.noBudgetReceiptLine} />
+                <View style={[styles.noBudgetReceiptLine, styles.noBudgetReceiptLineShort]} />
+                <View style={styles.noBudgetReceiptDot} />
+              </View>
+              <Text style={styles.noBudgetTransactionsEyebrow}>TRANSACTIONS</Text>
+              <Text style={styles.noBudgetTransactionsTitle}>Plan first. Logging gets easier.</Text>
+              <Text style={styles.noBudgetTransactionsText}>
+                Create a few categories before adding expenses, so every purchase has a clear place from day one.
+              </Text>
+              <Pressable style={styles.noBudgetTransactionsButton} onPress={openBudgetBuilder}>
+                <Text style={styles.noBudgetTransactionsButtonText}>
+                  {monthlyLimitNumber > 0 ? 'Continue budget' : 'Create budget'}
+                </Text>
+              </Pressable>
+              {previousBudgetMonth ? (
+                <Pressable onPress={copyPreviousBudgetIntoActiveMonth}>
+                  <Text style={styles.noBudgetTransactionsCopy}>
+                    Copy {getMonthLabel(previousBudgetMonth.id, localeTag)} instead
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : (
           <>
             <View style={styles.activityHeroCard}>
               <View style={styles.activityHeroCopy}>
@@ -6510,14 +7464,16 @@ export default function App() {
                   </Text>
                   <View style={styles.transactionSummaryRight}>
                     <Text style={styles.transactionSummaryMeta}>
-                      {activityScope === 'today'
-                        ? 'Today'
-                        : activityScope === 'week'
-                          ? 'This week'
-                          : getMonthLabel(activeMonth.id, localeTag)}
+                      {filteredIncomeTotal > 0
+                        ? `${formatCurrency(filteredIncomeTotal)} income`
+                        : activityScope === 'today'
+                          ? 'Today'
+                          : activityScope === 'week'
+                            ? 'This week'
+                            : getMonthLabel(activeMonth.id, localeTag)}
                     </Text>
                     <Text style={styles.transactionSummaryValue}>
-                      {formatCurrency(filteredTransactionTotal)}
+                      {formatCurrency(filteredTransactionTotal)} spent
                     </Text>
                   </View>
                 </View>
@@ -6542,6 +7498,7 @@ export default function App() {
                   showsVerticalScrollIndicator={false}
                   ItemSeparatorComponent={() => <View style={styles.listSpacer} />}
                   renderItem={({ item: transaction }) => {
+                    const isIncome = transaction.kind === 'income';
                     const category = categoryMap.get(transaction.categoryId);
                     const account = transaction.accountId ? accountMap.get(transaction.accountId) : null;
                     const theme = category ? categoryThemes[category.themeId] : categoryThemes.citrus;
@@ -6553,14 +7510,14 @@ export default function App() {
                       <TransactionListItem
                         swipeViewportWidth={swipeViewportWidth}
                         swipeRailWidth={swipeRailWidth}
-                        icon={category ? getCategoryIcon(category.name) : '•'}
-                        title={getTransactionDisplayTitle(transaction, category?.name)}
+                        icon={isIncome ? '+' : category ? getCategoryIcon(category.name) : '•'}
+                        title={isIncome ? transaction.note.trim() || 'Income' : getTransactionDisplayTitle(transaction, category?.name)}
                         dateText={formatTransactionDate(transaction.happenedAt, localeTag)}
-                        amountText={formatCurrency(transaction.amount)}
-                        categoryLabel={category?.name ?? 'Uncategorized'}
-                        subcategoryLabel={transaction.subcategory}
+                        amountText={`${isIncome ? '+' : ''}${formatCurrency(transaction.amount)}`}
+                        categoryLabel={isIncome ? 'Income' : category?.name ?? 'Uncategorized'}
+                        subcategoryLabel={isIncome ? undefined : transaction.subcategory}
                         accountLabel={account?.name ?? null}
-                        recurring={transaction.recurring}
+                        recurring={!isIncome && transaction.recurring}
                         tone={tone}
                         toneLabel={toneLabel}
                         palette={{
@@ -6583,7 +7540,7 @@ export default function App() {
                           successSurface: currentTheme.successSurface,
                           successText: currentTheme.successText,
                         }}
-                        onEdit={() => editTransaction(transaction)}
+                        onEdit={() => (isIncome ? openIncomeCapture(transaction) : editTransaction(transaction))}
                         onDelete={() => deleteTransaction(transaction.id)}
                         onQuickLog={() => repeatTransaction(transaction)}
                       />
@@ -6624,9 +7581,12 @@ export default function App() {
               </View>
             ) : null}
           </>
+          )
         ) : null}
 
-        {activeScreen === 'plan' ? (
+        {activeScreen === 'plan' ? renderSimplePlanScreen() : null}
+
+        {showLegacyPlan && activeScreen === 'plan' ? (
           <>
             {isInitialBudgetSetup ? (
               <View style={styles.budgetHeroCard}>
@@ -7446,11 +8406,19 @@ export default function App() {
                         </View>
                       </View>
 
-                      <View style={[styles.categoryTrack, { backgroundColor: theme.track }]}>
+                      <View style={[styles.categoryTrack, { backgroundColor: currentTheme.progressTrack }]}>
                         <View
                           style={[
                             styles.categoryFill,
-                            { backgroundColor: theme.fill, width: `${Math.round(clamp(summary.ratio) * 100)}%` },
+                            {
+                              backgroundColor:
+                                summary.tone === 'alert'
+                                  ? currentTheme.progressAlert
+                                  : summary.tone === 'warning'
+                                    ? currentTheme.progressWarning
+                                    : currentTheme.progressGood,
+                              width: `${Math.round(clamp(summary.ratio) * 100)}%`,
+                            },
                           ]}
                         />
                       </View>
@@ -8358,6 +9326,152 @@ export default function App() {
         />
       )}
       <Modal
+        animationType="fade"
+        transparent
+        visible={isDeleteBudgetPromptOpen}
+        onRequestClose={() => setIsDeleteBudgetPromptOpen(false)}
+      >
+        <View style={styles.confirmBackdrop}>
+          <Pressable
+            style={styles.confirmDismissArea}
+            onPress={() => setIsDeleteBudgetPromptOpen(false)}
+            accessibilityLabel="Cancel deleting budget"
+          />
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmEyebrow}>DELETE BUDGET</Text>
+            <Text style={styles.confirmTitle}>Delete {activeMonthName} budget?</Text>
+            <Text style={styles.confirmText}>
+              This permanently removes the monthly amount, {activeMonth.categories.length}{' '}
+              {activeMonth.categories.length === 1 ? 'category' : 'categories'}, and{' '}
+              {activeMonth.transactions.length}{' '}
+              {activeMonth.transactions.length === 1 ? 'transaction' : 'transactions'}.
+              Other months, accounts, goals, and settings stay intact.
+            </Text>
+            <View style={styles.confirmActions}>
+              <Pressable
+                style={styles.confirmCancelButton}
+                onPress={() => setIsDeleteBudgetPromptOpen(false)}
+                accessibilityRole="button"
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.confirmDeleteButton}
+                onPress={deleteActiveBudget}
+                accessibilityRole="button"
+              >
+                <Text style={styles.confirmDeleteText}>Delete budget</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isQuickAddMenuOpen}
+        onRequestClose={() => setIsQuickAddMenuOpen(false)}
+      >
+        <View style={styles.quickAddBackdrop}>
+          <Pressable
+            style={styles.quickAddDismissArea}
+            onPress={() => setIsQuickAddMenuOpen(false)}
+            accessibilityLabel="Close quick add menu"
+          />
+          <View style={styles.quickAddMenu}>
+            <Text style={styles.quickAddEyebrow}>QUICK ADD</Text>
+            <Pressable
+              style={styles.quickAddOption}
+              onPress={() => {
+                setIsQuickAddMenuOpen(false);
+                openExpenseCapture(undefined, null);
+              }}
+            >
+              <View style={styles.quickAddOptionMark}><Text style={styles.quickAddOptionMarkText}>−</Text></View>
+              <View style={styles.quickAddOptionCopy}>
+                <Text style={styles.quickAddOptionTitle}>Expense</Text>
+                <Text style={styles.quickAddOptionText}>Record money spent</Text>
+              </View>
+            </Pressable>
+            <Pressable style={styles.quickAddOption} onPress={() => openIncomeCapture()}>
+              <View style={[styles.quickAddOptionMark, styles.quickAddIncomeMark]}><Text style={styles.quickAddIncomeMarkText}>＋</Text></View>
+              <View style={styles.quickAddOptionCopy}>
+                <Text style={styles.quickAddOptionTitle}>Income</Text>
+                <Text style={styles.quickAddOptionText}>Track money received</Text>
+              </View>
+            </Pressable>
+            <Pressable style={styles.quickAddOption} onPress={openCategoryFromQuickAdd}>
+              <View style={styles.quickAddOptionMark}><Text style={styles.quickAddOptionMarkText}>C</Text></View>
+              <View style={styles.quickAddOptionCopy}>
+                <Text style={styles.quickAddOptionTitle}>Category</Text>
+                <Text style={styles.quickAddOptionText}>Add a new budget category</Text>
+              </View>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        animationType="slide"
+        transparent
+        visible={isIncomeSheetOpen}
+        onRequestClose={resetIncomeForm}
+      >
+        <View style={styles.sheetBackdrop}>
+          <Pressable style={styles.sheetDismissArea} onPress={resetIncomeForm} />
+          <View style={[styles.sheetCard, styles.incomeSheet]}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <View style={styles.sheetHeaderCopy}>
+                <Text style={styles.sheetTitle}>{editingIncomeId ? 'Edit income' : 'Add income'}</Text>
+                <Text style={styles.sheetSubtitle}>Tracked separately from your spending budget.</Text>
+              </View>
+              <Pressable style={styles.sheetCloseButton} onPress={resetIncomeForm} accessibilityLabel="Close income form">
+                <Text style={styles.sheetCloseButtonText}>×</Text>
+              </Pressable>
+            </View>
+            <View style={styles.incomeForm}>
+              <View style={[styles.expenseAmountCard, styles.incomeAmountCard]}>
+                <Text style={styles.expenseAmountLabel}>AMOUNT RECEIVED</Text>
+                <View style={styles.expenseAmountRow}>
+                  <Text style={styles.expenseAmountCurrency}>{activeMonthCurrencyMarker}</Text>
+                  <TextInput
+                    style={styles.expenseAmountInput}
+                    value={incomeAmount}
+                    onChangeText={setIncomeAmount}
+                    keyboardType="numeric"
+                    autoFocus={!editingIncomeId}
+                    returnKeyType="done"
+                    onSubmitEditing={submitIncome}
+                    placeholder="0"
+                    placeholderTextColor={currentTheme.heroMuted}
+                  />
+                </View>
+              </View>
+              <View>
+                <Text style={styles.fieldLabel}>Source <Text style={styles.optionalLabel}>Optional</Text></Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={incomeSource}
+                  onChangeText={setIncomeSource}
+                  returnKeyType="done"
+                  onSubmitEditing={submitIncome}
+                  placeholder="Salary, freelance, refund..."
+                  placeholderTextColor={currentTheme.placeholder}
+                />
+              </View>
+              <Text style={styles.incomeHint}>Income will not increase or change the monthly spending amount.</Text>
+              <Pressable
+                style={[styles.incomeSaveButton, (!Number(incomeAmount) || Number(incomeAmount) <= 0) && styles.buttonDisabled]}
+                onPress={submitIncome}
+                disabled={!Number(incomeAmount) || Number(incomeAmount) <= 0}
+              >
+                <Text style={styles.incomeSaveButtonText}>{editingIncomeId ? 'Save income' : 'Add income'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal
         animationType="slide"
         transparent
         visible={isExpenseSheetOpen}
@@ -8370,14 +9484,24 @@ export default function App() {
             <View style={styles.sheetHeader}>
               <View style={styles.sheetHeaderCopy}>
                 <Text style={styles.sheetTitle}>
-                  {editingTransactionId ? '✏️ Edit expense' : '💸 Log expense'}
+                  {editingTransactionId
+                    ? 'Edit expense'
+                    : expenseContextCategoryId && selectedExpenseCategory
+                      ? `Add to ${selectedExpenseCategory.name}`
+                      : 'Add expense'}
                 </Text>
                 <Text style={styles.sheetSubtitle}>
-                  {editingTransactionId ? 'Update the details below.' : 'What did you spend on?'}
+                  {editingTransactionId
+                    ? 'Update only what changed.'
+                    : 'A quick, clear entry for this month.'}
                 </Text>
               </View>
-              <Pressable style={styles.sheetCloseButton} onPress={resetTransactionForm}>
-                <Text style={styles.sheetCloseButtonText}>✕</Text>
+              <Pressable
+                style={styles.sheetCloseButton}
+                onPress={resetTransactionForm}
+                accessibilityLabel="Close expense form"
+              >
+                <Text style={styles.sheetCloseButtonText}>×</Text>
               </Pressable>
             </View>
 
@@ -8400,130 +9524,255 @@ export default function App() {
       >
         <View style={styles.sheetBackdrop}>
           <Pressable style={styles.sheetDismissArea} onPress={closeCategoryDetail} />
-          <View style={styles.sheetCard}>
+          <View style={[styles.sheetCard, styles.categoryDetailSheet]}>
             <View style={styles.sheetHandle} />
-            <View style={styles.sheetHeader}>
-              <View style={styles.sheetHeaderCopy}>
-                <Text style={styles.sheetTitle}>
-                  {selectedCategorySummary?.category.name ?? 'Category'}
-                </Text>
-                <Text style={styles.sheetSubtitle}>
-                  {selectedCategorySummary
-                    ? `${formatCurrency(selectedCategorySummary.spent)} spent of ${formatCurrency(
-                        selectedCategorySummary.category.planned,
-                      )} planned.`
-                    : 'Review this category and log the next expense from here.'}
-                </Text>
+            {selectedCategorySummary && selectedCategoryDetail ? (
+              <View style={styles.categoryDetailHeader}>
+                <View
+                  style={[
+                    styles.categoryDetailHeaderIcon,
+                    { backgroundColor: categoryThemes[selectedCategoryDetail.themeId].bubble },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.categoryDetailHeaderIconText,
+                      { color: categoryThemes[selectedCategoryDetail.themeId].bubbleText },
+                    ]}
+                  >
+                    {getCategoryIcon(selectedCategoryDetail.name)}
+                  </Text>
+                </View>
+                <View style={styles.categoryDetailHeaderCopy}>
+                  <Text style={styles.categoryDetailEyebrow}>CATEGORY</Text>
+                  <Text style={styles.categoryDetailTitle}>{selectedCategoryDetail.name}</Text>
+                  <Text style={styles.categoryDetailHeaderMeta}>
+                    {categoryBucketMeta[selectedCategoryDetail.bucket].label}
+                    {selectedCategoryDetail.recurring ? ' · repeats monthly' : ''}
+                  </Text>
+                </View>
+                <View style={styles.categoryDetailHeaderActions}>
+                  <Pressable
+                    style={styles.categoryDetailEditButton}
+                    onPress={() => {
+                      const nextCategory = selectedCategoryDetail;
+                      closeCategoryDetail();
+                      editCategory(nextCategory);
+                    }}
+                  >
+                    <Text style={styles.categoryDetailEditButtonText}>Edit</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.sheetCloseButton}
+                    onPress={closeCategoryDetail}
+                    accessibilityLabel="Close category details"
+                  >
+                    <Text style={styles.sheetCloseButtonText}>×</Text>
+                  </Pressable>
+                </View>
               </View>
-              <Button variant="secondary" size="medium" onPress={closeCategoryDetail}>
-                Close
-              </Button>
-            </View>
+            ) : null}
 
             {selectedCategorySummary && selectedCategoryDetail ? (
               <ScrollView
                 style={styles.sheetScroll}
-                contentContainerStyle={styles.sheetContent}
+                contentContainerStyle={styles.categoryDetailContent}
                 showsVerticalScrollIndicator={false}
               >
-                <View style={styles.categoryDetailCard}>
-                  <View style={styles.categoryDetailStats}>
-                    <View style={styles.categoryDetailStat}>
-                      <Text style={styles.categoryDetailStatLabel}>Left</Text>
+                <View style={styles.categoryDetailHero}>
+                  <Text style={styles.categoryDetailHeroEyebrow}>MONTHLY PROGRESS</Text>
+                  <View style={styles.categoryDetailAmountRow}>
+                    <View style={styles.categoryDetailSpentBlock}>
+                      <Text style={styles.categoryDetailSpentValue}>
+                        {formatCurrency(selectedCategorySummary.spent)}
+                      </Text>
+                      <Text style={styles.categoryDetailSpentLabel}>
+                        of {formatCurrency(selectedCategorySummary.category.planned)} spent
+                      </Text>
+                    </View>
+                    <View style={styles.categoryDetailRemainingBlock}>
                       <Text
                         style={[
-                          styles.categoryDetailStatValue,
-                          selectedCategorySummary.left < 0 && styles.currentBudgetAmountAlert,
+                          styles.categoryDetailRemainingValue,
+                          selectedCategorySummary.left < 0 && styles.categoryDetailRemainingAlert,
                         ]}
                       >
-                        {formatCurrency(selectedCategorySummary.left)}
+                        {formatCurrency(Math.abs(selectedCategorySummary.left))}
                       </Text>
-                    </View>
-                    <View style={styles.categoryDetailStat}>
-                      <Text style={styles.categoryDetailStatLabel}>This week</Text>
-                      <Text style={styles.categoryDetailStatValue}>
-                        {formatCurrency(selectedCategorySummary.thisWeek)}
-                      </Text>
-                    </View>
-                    <View style={styles.categoryDetailStat}>
-                      <Text style={styles.categoryDetailStatLabel}>Type</Text>
-                      <Text style={styles.categoryDetailStatValue}>
-                        {selectedCategoryDetail.recurring ? 'Fixed' : 'Flexible'}
+                      <Text
+                        style={[
+                          styles.categoryDetailRemainingLabel,
+                          selectedCategorySummary.left < 0 && styles.categoryDetailRemainingAlert,
+                        ]}
+                      >
+                        {selectedCategorySummary.left < 0 ? 'over' : 'remaining'}
                       </Text>
                     </View>
                   </View>
 
                   <View
                     style={[
-                      styles.currentBudgetTrack,
-                      { backgroundColor: categoryThemes[selectedCategoryDetail.themeId].track },
+                      styles.categoryDetailTrack,
+                      { backgroundColor: currentTheme.progressTrack },
                     ]}
                   >
                     <View
                       style={[
-                        styles.currentBudgetFill,
+                        styles.categoryDetailFill,
                         {
-                          backgroundColor: categoryThemes[selectedCategoryDetail.themeId].fill,
+                          backgroundColor:
+                            selectedCategorySummary.tone === 'alert'
+                              ? currentTheme.progressAlert
+                              : selectedCategorySummary.tone === 'warning'
+                                ? currentTheme.progressWarning
+                                : currentTheme.progressGood,
                           width: `${Math.round(clamp(selectedCategorySummary.ratio) * 100)}%`,
                         },
                       ]}
                     />
                   </View>
 
+                  <View style={styles.categoryDetailHeroFooter}>
+                    <Text style={styles.categoryDetailHeroMeta}>
+                      {formatCurrency(selectedCategorySummary.thisWeek)} spent this week
+                    </Text>
+                    <Text style={styles.categoryDetailHeroMeta}>
+                      {Math.round(selectedCategorySummary.ratio * 100)}% used
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.categoryDetailActions}>
+                  <Pressable
+                    style={styles.categoryDetailPrimaryAction}
+                    onPress={() => {
+                      const nextCategoryId = selectedCategoryDetail.id;
+                      closeCategoryDetail();
+                      openExpenseCapture(nextCategoryId, null);
+                    }}
+                  >
+                    <Text style={styles.categoryDetailPrimaryActionText}>＋ Expense</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.categoryDetailSecondaryAction}
+                    onPress={() => setShowCategoryDetailSubcategoryInput((current) => !current)}
+                  >
+                    <Text style={styles.categoryDetailSecondaryActionText}>
+                      {showCategoryDetailSubcategoryInput ? 'Cancel' : '＋ Subcategory'}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {selectedCategoryDetail.subcategories.length > 0 || showCategoryDetailSubcategoryInput ? (
+                  <View style={styles.categoryDetailSubcategories}>
+                  <View style={styles.categoryDetailSubcategoryHeader}>
+                    <Text style={styles.categoryDetailSubcategoryTitle}>Subcategories</Text>
+                  </View>
+
                   {selectedCategoryDetail.subcategories.length > 0 ? (
-                    <>
-                      <Text style={styles.fieldLabel}>Subcategories</Text>
-                      <View style={styles.chipWrap}>
-                        {selectedCategoryDetail.subcategories.map((subcategory) => (
+                    <View style={styles.categoryDetailSubcategoryList}>
+                      {selectedCategoryDetail.subcategories.map((subcategory) => {
+                        const subcategoryTransactions = selectedCategorySummary.transactions.filter(
+                          (transaction) => transaction.subcategory === subcategory,
+                        );
+                        const subcategorySpent = subcategoryTransactions.reduce(
+                          (sum, transaction) => sum + transaction.amount,
+                          0,
+                        );
+
+                        return (
                           <Pressable
                             key={subcategory}
-                            style={[styles.subcategoryPill, styles.subcategoryActionPill]}
+                            style={styles.categoryDetailSubcategoryRow}
                             onPress={() => {
                               const nextCategoryId = selectedCategoryDetail.id;
                               closeCategoryDetail();
                               openExpenseCapture(nextCategoryId, null, subcategory);
                             }}
+                            accessibilityLabel={`${subcategory}, ${formatCurrency(subcategorySpent)} spent. Add expense.`}
                           >
-                            <Text style={[styles.subcategoryPillText, styles.subcategoryActionPillText]}>
-                              + {subcategory}
-                            </Text>
+                            <View
+                              style={[
+                                styles.categoryDetailSubcategoryIcon,
+                                { backgroundColor: categoryThemes[selectedCategoryDetail.themeId].bubble },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.categoryDetailSubcategoryIconText,
+                                  { color: categoryThemes[selectedCategoryDetail.themeId].bubbleText },
+                                ]}
+                              >
+                                {subcategory.slice(0, 1).toUpperCase()}
+                              </Text>
+                            </View>
+                            <View style={styles.categoryDetailSubcategoryCopy}>
+                              <Text style={styles.categoryDetailSubcategoryName}>{subcategory}</Text>
+                            </View>
+                            <View style={styles.categoryDetailSubcategoryAmountBlock}>
+                              <Text style={styles.categoryDetailSubcategoryAmount}>
+                                {formatCurrency(subcategorySpent)}
+                              </Text>
+                              <Text style={styles.categoryDetailSubcategoryAmountLabel}>spent</Text>
+                            </View>
+                            <View style={styles.categoryDetailSubcategoryQuickAdd}>
+                              <Text style={styles.categoryDetailSubcategoryQuickAddText}>＋</Text>
+                            </View>
                           </Pressable>
-                        ))}
-                      </View>
-                    </>
+                        );
+                      })}
+                    </View>
                   ) : null}
 
-                  <View style={styles.actionRow}>
-                    <Button
-                      variant="primary"
-                      size="medium"
-                      onPress={() => {
-                        const nextCategoryId = selectedCategoryDetail.id;
-                        closeCategoryDetail();
-                        openExpenseCapture(nextCategoryId, null);
-                      }}
-                    >
-                      Add expense
-                    </Button>
-                    <Pressable
-                      style={styles.ghostButton}
-                      onPress={() => {
-                        const nextCategory = selectedCategoryDetail;
-                        closeCategoryDetail();
-                        editCategory(nextCategory);
-                      }}
-                    >
-                      <Text style={styles.ghostButtonText}>Edit category</Text>
-                    </Pressable>
+                  {showCategoryDetailSubcategoryInput ? (
+                    <View style={styles.categoryDetailSubcategoryComposer}>
+                      <Text style={styles.categoryDetailSubcategoryComposerLabel}>SUBCATEGORY NAME</Text>
+                      <View style={styles.categoryDetailSubcategoryComposerRow}>
+                        <TextInput
+                          style={styles.categoryDetailSubcategoryInput}
+                          value={categoryDetailSubcategoryName}
+                          onChangeText={setCategoryDetailSubcategoryName}
+                          autoFocus
+                          returnKeyType="done"
+                          onSubmitEditing={addCategoryDetailSubcategory}
+                          placeholder="e.g. Coffee"
+                          placeholderTextColor={currentTheme.placeholder}
+                        />
+                        <Pressable
+                          style={[styles.categoryDetailSubcategorySave, !categoryDetailSubcategoryName.trim() && styles.buttonDisabled]}
+                          onPress={addCategoryDetailSubcategory}
+                          disabled={!categoryDetailSubcategoryName.trim()}
+                        >
+                          <Text style={styles.categoryDetailSubcategorySaveText}>Add subcategory</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : null}
                   </View>
-                </View>
+                ) : null}
 
-                <View style={styles.card}>
-                  <Text style={styles.sectionTitle}>Recent expenses</Text>
-                  {selectedCategoryTransactions.length > 0 ? (
+                {selectedCategoryTransactions.length > 0 ? (
+                  <View style={styles.categoryDetailActivity}>
+                    <View style={styles.categoryDetailSectionHeader}>
+                      <View>
+                        <Text style={styles.categoryDetailSectionEyebrow}>ACTIVITY</Text>
+                        <Text style={styles.categoryDetailSectionTitle}>Recent expenses</Text>
+                      </View>
+                      <Text style={styles.categoryDetailSectionCount}>
+                        {selectedCategoryTransactions.length} recent
+                      </Text>
+                    </View>
+
                     <View style={styles.categoryDetailTransactionList}>
                       {selectedCategoryTransactions.map((transaction) => (
-                        <View key={transaction.id} style={styles.categoryDetailTransactionRow}>
+                        <Pressable
+                          key={transaction.id}
+                          style={styles.categoryDetailTransactionRow}
+                          onPress={() => {
+                            closeCategoryDetail();
+                            editTransaction(transaction);
+                          }}
+                        >
                           <View style={styles.categoryDetailTransactionCopy}>
                             <Text style={styles.categoryDetailTransactionTitle}>
                               {getTransactionDisplayTitle(transaction, selectedCategoryDetail.name)}
@@ -8535,19 +9784,13 @@ export default function App() {
                             </Text>
                           </View>
                           <Text style={styles.categoryDetailTransactionAmount}>
-                            {formatCurrency(transaction.amount)}
+                            −{formatCurrency(transaction.amount)}
                           </Text>
-                        </View>
+                        </Pressable>
                       ))}
                     </View>
-                  ) : (
-                    <View style={styles.emptyStateCompact}>
-                      <Text style={styles.selectorHint}>
-                        No expenses have been logged in this category yet.
-                      </Text>
-                    </View>
-                  )}
-                </View>
+                  </View>
+                ) : null}
               </ScrollView>
             ) : null}
           </View>
@@ -8926,6 +10169,14 @@ export default function App() {
           accentText: currentTheme.accentText,
         }}
       />
+      <Pressable
+        style={styles.quickAddFab}
+        onPress={() => setIsQuickAddMenuOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Quick add expense, income, or category"
+      >
+        <Text style={styles.quickAddFabText}>＋</Text>
+      </Pressable>
       <View style={styles.bottomNav}>
         {screenTabs.map((screenId) => (
           <AnimatedPressable
@@ -8949,16 +10200,15 @@ export default function App() {
               navigateToScreen(screenId);
             }}
           >
-            {tabIcons[screenId] ? (
-              <Text
-                style={[
-                  styles.bottomNavIcon,
-                  activeNavScreen === screenId && styles.bottomNavIconActive,
-                ]}
-              >
-                {tabIcons[screenId]}
-              </Text>
-            ) : null}
+            <View
+              style={[
+                styles.bottomNavIconWrap,
+                activeNavScreen === screenId && styles.bottomNavIconWrapActive,
+              ]}
+            >
+              {renderTabIcon(screenId, activeNavScreen === screenId)}
+              {screenId === 'plan' && !hasActiveBudget ? <View style={styles.bottomNavSetupDot} /> : null}
+            </View>
             <Text
               style={[
                 styles.bottomNavText,
@@ -9944,6 +11194,1008 @@ const createStyles = (
       lineHeight: 16,
       marginTop: 6,
     },
+    settingsPage: {
+      gap: 8,
+      paddingBottom: 12,
+    },
+    settingsGroupLabel: {
+      color: theme.textSoft,
+      fontSize: 10,
+      fontWeight: '800',
+      letterSpacing: 1.1,
+      marginTop: 10,
+      marginLeft: 4,
+    },
+    settingsGroup: {
+      backgroundColor: theme.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      overflow: 'hidden',
+      marginBottom: 8,
+    },
+    settingsRow: {
+      minHeight: 54,
+      paddingHorizontal: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.divider,
+    },
+    settingsRowLast: {
+      borderBottomWidth: 0,
+    },
+    settingsRowTitle: {
+      color: theme.text,
+      fontSize: 15,
+      fontWeight: '600',
+      flexShrink: 1,
+    },
+    settingsRowTrailing: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 8,
+      flexShrink: 1,
+    },
+    settingsRowValue: {
+      color: theme.textMuted,
+      fontSize: 13,
+      flexShrink: 1,
+      textAlign: 'right',
+    },
+    settingsChevron: {
+      color: theme.textSoft,
+      fontSize: 22,
+      lineHeight: 24,
+      fontWeight: '400',
+    },
+    settingsVersion: {
+      color: theme.textSoft,
+      fontSize: 11,
+      textAlign: 'center',
+      marginTop: 10,
+    },
+    homePulsePage: {
+      gap: 12,
+      paddingBottom: 12,
+    },
+    homePulseTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    homePulseMonth: {
+      color: theme.text,
+      fontSize: 24,
+      lineHeight: 29,
+      fontWeight: '800',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      marginTop: 3,
+    },
+    homePlanLink: {
+      backgroundColor: theme.surfaceTint,
+      borderRadius: 999,
+      paddingHorizontal: 13,
+      paddingVertical: 8,
+    },
+    homePlanLinkText: {
+      color: theme.accent,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    homePulseCard: {
+      backgroundColor: theme.accent,
+      borderRadius: 22,
+      padding: isCompact ? 15 : 18,
+      gap: 7,
+      shadowColor: theme.shadow,
+      shadowOpacity: 0.14,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 4,
+    },
+    homePulseEyebrow: {
+      color: theme.heroText,
+      opacity: 0.68,
+      fontSize: 10,
+      fontWeight: '800',
+      letterSpacing: 1.2,
+    },
+    homePulseAmount: {
+      color: theme.heroText,
+      fontSize: isCompact ? 38 : 44,
+      lineHeight: isCompact ? 42 : 48,
+      fontWeight: '900',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      letterSpacing: -1.2,
+    },
+    homePulseSupport: {
+      color: theme.heroText,
+      opacity: 0.78,
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    homePulseTrack: {
+      height: 7,
+      borderRadius: 999,
+      backgroundColor: 'rgba(255,255,255,0.2)',
+      overflow: 'hidden',
+      marginTop: 5,
+    },
+    homePulseFill: {
+      height: '100%',
+      borderRadius: 999,
+    },
+    homePulseBottomRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      marginTop: 4,
+    },
+    homePulseStatLabel: {
+      color: theme.heroText,
+      opacity: 0.55,
+      fontSize: 9,
+      fontWeight: '800',
+      letterSpacing: 0.8,
+      marginBottom: 3,
+    },
+    homePulseStatValue: {
+      color: theme.heroText,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    homePulseCompactAction: {
+      backgroundColor: theme.heroText,
+      borderRadius: 13,
+      minHeight: 38,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 13,
+    },
+    homePulseCompactActionText: {
+      color: theme.accent,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    homePulseAction: {
+      backgroundColor: theme.heroText,
+      borderRadius: 16,
+      minHeight: 48,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 8,
+      paddingHorizontal: 16,
+    },
+    homePulseActionText: {
+      color: theme.accent,
+      fontSize: 14,
+      fontWeight: '800',
+    },
+    homeCompactSection: {
+      gap: 12,
+    },
+    homeSectionHeadingRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    homeSectionTitle: {
+      color: theme.text,
+      fontSize: 21,
+      lineHeight: 25,
+      fontWeight: '800',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      marginTop: 3,
+    },
+    homeAttentionList: {
+      backgroundColor: theme.surface,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      overflow: 'hidden',
+    },
+    homeAttentionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.divider,
+    },
+    homeAttentionIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    homeAttentionIconText: {
+      fontSize: 15,
+      fontWeight: '800',
+    },
+    homeAttentionCopy: {
+      flex: 1,
+      minWidth: 0,
+      gap: 5,
+    },
+    homeAttentionTextRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    homeAttentionName: {
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    homeAttentionPercent: {
+      color: theme.warningText,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    homeAttentionPercentAlert: {
+      color: theme.alertText,
+    },
+    homeAttentionTrack: {
+      height: 5,
+      borderRadius: 999,
+      overflow: 'hidden',
+    },
+    homeAttentionFill: {
+      height: '100%',
+      borderRadius: 999,
+    },
+    homeAttentionMeta: {
+      color: theme.textMuted,
+      fontSize: 10,
+    },
+    homeQuietMessage: {
+      color: theme.textMuted,
+      backgroundColor: theme.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      paddingHorizontal: 15,
+      paddingVertical: 15,
+      fontSize: 13,
+    },
+    homeRecentList: {
+      backgroundColor: theme.surface,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      overflow: 'hidden',
+    },
+    homeRecentRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      paddingHorizontal: 15,
+      paddingVertical: 13,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.divider,
+    },
+    homeRecentCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    homeRecentTitle: {
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    homeRecentMeta: {
+      color: theme.textMuted,
+      fontSize: 10,
+      marginTop: 3,
+    },
+    homeRecentAmount: {
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '800',
+    },
+    homePlanSection: {
+      gap: 8,
+    },
+    homePlanList: {
+      backgroundColor: theme.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      overflow: 'hidden',
+    },
+    homePlanRow: {
+      minHeight: 54,
+      gap: 7,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.divider,
+    },
+    homePlanTrack: {
+      height: 6,
+      borderRadius: 999,
+      overflow: 'hidden',
+    },
+    homePlanFill: {
+      height: '100%',
+      borderRadius: 999,
+    },
+    homePlanRemaining: {
+      minWidth: isNarrow ? 62 : 72,
+      alignItems: 'flex-end',
+    },
+    homePlanRemainingValue: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    homePlanRemainingLabel: {
+      color: theme.textMuted,
+      fontSize: 9,
+      fontWeight: '700',
+      marginTop: 1,
+    },
+    homePlanRemainingAlert: {
+      color: theme.alertText,
+    },
+    homePlanMoreRow: {
+      minHeight: 31,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+    },
+    homePlanMoreText: {
+      color: theme.accentText,
+      fontSize: 10,
+      fontWeight: '800',
+    },
+    homeStartCard: {
+      backgroundColor: theme.accent,
+      borderRadius: 26,
+      padding: 22,
+      gap: 10,
+    },
+    homeStartTitle: {
+      color: theme.heroText,
+      fontSize: 28,
+      lineHeight: 33,
+      fontWeight: '800',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+    },
+    homeStartText: {
+      color: theme.heroText,
+      opacity: 0.75,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    homeStartVisual: {
+      width: 82,
+      height: 64,
+      marginBottom: 4,
+      position: 'relative',
+    },
+    homeStartCoinBack: {
+      position: 'absolute',
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      left: 25,
+      top: 2,
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.24)',
+    },
+    homeStartCoinFront: {
+      position: 'absolute',
+      width: 52,
+      height: 52,
+      borderRadius: 26,
+      left: 5,
+      top: 10,
+      backgroundColor: theme.heroText,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: theme.shadow,
+      shadowOpacity: 0.14,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 5 },
+    },
+    homeStartCoinText: {
+      color: theme.accent,
+      fontSize: 19,
+      fontWeight: '900',
+    },
+    homeStartSpark: {
+      position: 'absolute',
+      width: 9,
+      height: 9,
+      borderRadius: 2,
+      right: 1,
+      top: 0,
+      backgroundColor: theme.heroText,
+      transform: [{ rotate: '45deg' }],
+    },
+    homeStartMiniSteps: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 7,
+      marginTop: 4,
+    },
+    homeStartMiniStep: {
+      color: theme.heroText,
+      backgroundColor: 'rgba(255,255,255,0.13)',
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+    homeStartCopyButton: {
+      alignSelf: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    homeStartCopyText: {
+      color: theme.heroText,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    homeStartTime: {
+      color: theme.heroText,
+      opacity: 0.55,
+      textAlign: 'center',
+      fontSize: 10,
+      fontWeight: '600',
+    },
+    budgetBuilderPage: {
+      gap: 16,
+      paddingBottom: 16,
+    },
+    budgetBuilderIntro: {
+      backgroundColor: theme.accent,
+      borderRadius: 26,
+      paddingHorizontal: 20,
+      paddingVertical: 22,
+      gap: 8,
+      overflow: 'hidden',
+    },
+    budgetBuilderEyebrow: {
+      color: theme.heroText,
+      opacity: 0.6,
+      fontSize: 10,
+      fontWeight: '900',
+      letterSpacing: 1.2,
+    },
+    budgetBuilderTitle: {
+      color: theme.heroText,
+      fontSize: isCompact ? 27 : 31,
+      lineHeight: isCompact ? 32 : 36,
+      fontWeight: '800',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+    },
+    budgetBuilderSubtitle: {
+      color: theme.heroText,
+      opacity: 0.74,
+      fontSize: 13,
+      lineHeight: 19,
+      maxWidth: 430,
+    },
+    budgetBuilderSteps: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 8,
+    },
+    budgetBuilderStep: {
+      flex: 1,
+      flexDirection: isNarrow ? 'column' : 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    budgetBuilderStepDot: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      backgroundColor: 'rgba(255,255,255,0.13)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    budgetBuilderStepDotDone: {
+      backgroundColor: theme.heroText,
+    },
+    budgetBuilderStepNumber: {
+      color: theme.heroText,
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    budgetBuilderStepNumberDone: {
+      color: theme.accent,
+    },
+    budgetBuilderStepLabel: {
+      color: theme.heroText,
+      opacity: 0.58,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+    budgetBuilderStepLabelDone: {
+      opacity: 1,
+    },
+    budgetBuilderAmountCard: {
+      backgroundColor: theme.surface,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      padding: 18,
+      gap: 8,
+    },
+    budgetBuilderQuestion: {
+      color: theme.text,
+      fontSize: 19,
+      lineHeight: 24,
+      fontWeight: '800',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+    },
+    budgetBuilderHint: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+    },
+    budgetBuilderAmountInputWrap: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      borderBottomWidth: 2,
+      borderBottomColor: theme.accentBorder,
+      marginTop: 8,
+      paddingBottom: 3,
+      gap: 10,
+    },
+    budgetBuilderCurrency: {
+      color: theme.accentText,
+      fontSize: 11,
+      fontWeight: '900',
+    },
+    budgetBuilderAmountInput: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 38,
+      lineHeight: 44,
+      fontWeight: '800',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      paddingVertical: 3,
+    },
+    budgetBuilderBalanceRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      marginTop: 7,
+      backgroundColor: theme.surfaceTint,
+      borderRadius: 14,
+      paddingHorizontal: 13,
+      paddingVertical: 11,
+    },
+    budgetBuilderBalanceLabel: {
+      color: theme.textMuted,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    budgetBuilderBalanceValue: {
+      color: theme.accentText,
+      fontSize: 16,
+      fontWeight: '900',
+    },
+    budgetBuilderBalanceValueAlert: {
+      color: theme.alertText,
+    },
+    budgetBuilderCopyButton: {
+      alignSelf: 'flex-start',
+      paddingVertical: 7,
+      marginTop: 2,
+    },
+    budgetBuilderCopyText: {
+      color: theme.accentText,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    budgetBuilderCategorySection: {
+      gap: 13,
+    },
+    budgetBuilderSectionTitle: {
+      color: theme.text,
+      fontSize: 20,
+      lineHeight: 25,
+      fontWeight: '800',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      marginTop: 4,
+    },
+    budgetBuilderSectionText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+      marginTop: 3,
+    },
+    budgetBuilderCategoryList: {
+      backgroundColor: theme.surface,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      overflow: 'hidden',
+    },
+    budgetBuilderCategoryRow: {
+      minHeight: 58,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.divider,
+    },
+    budgetBuilderCategoryName: {
+      flex: 1,
+      minWidth: 0,
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '800',
+    },
+    budgetBuilderCategoryAmount: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    budgetBuilderComposer: {
+      backgroundColor: theme.surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: theme.accentBorder,
+      padding: 16,
+      gap: 13,
+    },
+    budgetBuilderAddAnotherButton: {
+      alignSelf: 'flex-start',
+      backgroundColor: theme.surfaceTint,
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    budgetBuilderAddAnotherText: {
+      color: theme.accentText,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    budgetBuilderDraftBalance: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    budgetBuilderLockedHint: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      paddingVertical: 18,
+    },
+    budgetBuilderLockedIcon: {
+      color: theme.accent,
+      fontSize: 20,
+      fontWeight: '900',
+    },
+    budgetBuilderLockedText: {
+      color: theme.textMuted,
+      fontSize: 12,
+      textAlign: 'center',
+    },
+    budgetBuilderFinishArea: {
+      gap: 8,
+      marginTop: 2,
+    },
+    budgetBuilderAutosave: {
+      color: theme.textSoft,
+      fontSize: 10,
+      textAlign: 'center',
+    },
+    budgetBuilderFinishButton: {
+      minHeight: 52,
+      borderRadius: 17,
+      backgroundColor: theme.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 18,
+    },
+    budgetBuilderFinishText: {
+      color: theme.heroText,
+      fontSize: 14,
+      fontWeight: '900',
+    },
+    simplePlanPage: {
+      gap: 18,
+      paddingBottom: 12,
+    },
+    planAmountPanel: {
+      backgroundColor: theme.accent,
+      borderRadius: 24,
+      padding: 18,
+      gap: 12,
+    },
+    planAmountHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 16,
+    },
+    planAmountMonth: {
+      color: theme.heroText,
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      fontSize: 22,
+      fontWeight: '700',
+      marginTop: 4,
+    },
+    planAmountInputWrap: {
+      minWidth: 112,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.accentBorder,
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'flex-end',
+      gap: 7,
+    },
+    planAmountCurrency: {
+      color: theme.heroText,
+      opacity: 0.6,
+      fontSize: 10,
+      fontWeight: '800',
+    },
+    planAmountInput: {
+      color: theme.heroText,
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      fontSize: 28,
+      fontWeight: '700',
+      textAlign: 'right',
+      paddingVertical: 4,
+      minWidth: 72,
+    },
+    planAmountMetaRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    planAmountMeta: {
+      color: theme.heroText,
+      opacity: 0.78,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    planListHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    planListHeaderActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+    },
+    planListTitle: {
+      color: theme.text,
+      fontSize: 20,
+      fontWeight: '700',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      marginTop: 3,
+    },
+    planAddButton: {
+      backgroundColor: theme.accent,
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+    },
+    planAddButtonText: {
+      color: theme.heroText,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    planReorderButton: {
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      backgroundColor: theme.accentSoft,
+      borderWidth: 1,
+      borderColor: theme.accentBorder,
+    },
+    planReorderButtonText: {
+      color: theme.accentText,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    planReorderControls: {
+      flexDirection: 'row',
+      gap: 6,
+    },
+    planReorderControl: {
+      width: 34,
+      height: 32,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.accentSoft,
+      borderWidth: 1,
+      borderColor: theme.accentBorder,
+    },
+    planReorderControlText: {
+      color: theme.accentText,
+      fontSize: 16,
+      lineHeight: 18,
+      fontWeight: '900',
+    },
+    planCategoryList: {
+      backgroundColor: theme.surface,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      overflow: 'hidden',
+    },
+    planCategoryRow: {
+      paddingHorizontal: 15,
+      paddingVertical: 14,
+      gap: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.divider,
+    },
+    planCategoryMainRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+    },
+    planCategoryIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    planCategoryIconText: {
+      fontSize: 16,
+      fontWeight: '800',
+    },
+    planCategoryCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    planCategoryName: {
+      color: theme.text,
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    planCategoryMeta: {
+      color: theme.textMuted,
+      fontSize: 11,
+      marginTop: 3,
+    },
+    planCategoryPlanned: {
+      color: theme.text,
+      fontSize: 15,
+      fontWeight: '800',
+    },
+    planCategoryActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 14,
+    },
+    planCategoryBucket: {
+      color: theme.textSoft,
+      fontSize: 10,
+      marginRight: 'auto',
+      textTransform: 'capitalize',
+    },
+    planTextAction: {
+      color: theme.accent,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    planDeleteAction: {
+      color: theme.alertText,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    simpleEmptyState: {
+      padding: 20,
+      alignItems: 'center',
+    },
+    planComposer: {
+      backgroundColor: theme.surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      padding: 16,
+      gap: 14,
+    },
+    planComposerHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    planComposerTitle: {
+      color: theme.text,
+      fontSize: 18,
+      fontWeight: '700',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+    },
+    planPresetRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    planPresetButton: {
+      backgroundColor: theme.surfaceTint,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    planPresetText: {
+      color: theme.accentText,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    planComposerFields: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 10,
+    },
+    planComposerFieldWide: {
+      flex: 1,
+    },
+    planComposerFieldAmount: {
+      width: isNarrow ? 100 : 120,
+    },
+    planComposerInput: {
+      color: theme.text,
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      paddingHorizontal: 12,
+      paddingVertical: 0,
+      height: 44,
+      fontSize: 14,
+      lineHeight: 18,
+      textAlignVertical: 'center',
+      includeFontPadding: false,
+      marginTop: 6,
+    },
+    planOptionsButton: {
+      alignSelf: 'flex-start',
+      paddingVertical: 2,
+    },
+    planOptionsPanel: {
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 14,
+      padding: 12,
+      gap: 10,
+    },
+    planDeleteBudgetButton: {
+      alignSelf: 'flex-end',
+      backgroundColor: theme.alertSurface,
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+    },
+    planDeleteBudgetText: {
+      color: theme.alertText,
+      fontSize: 12,
+      fontWeight: '800',
+    },
     moreShortcutGrid: {
       flexDirection: 'column',
       gap: 8,
@@ -10178,8 +12430,8 @@ const createStyles = (
       marginBottom: 10,
     },
     expenseFormStack: {
-      gap: 10,
-      marginBottom: 12,
+      gap: 7,
+      marginBottom: 8,
     },
     fieldCard: {
       flex: 1,
@@ -10218,6 +12470,20 @@ const createStyles = (
       fontWeight: '700',
       marginBottom: 4,
     },
+    optionalLabel: {
+      color: theme.textSoft,
+      fontWeight: '500',
+    },
+    expenseNoteField: {
+      backgroundColor: 'transparent',
+      borderRadius: 0,
+      borderWidth: 0,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.divider,
+      paddingHorizontal: 0,
+      paddingVertical: 6,
+      marginTop: 8,
+    },
     expenseSectionHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -10233,28 +12499,34 @@ const createStyles = (
       letterSpacing: 0.4,
     },
     fieldInput: {
-      fontSize: 15,
+      fontSize: 14,
       fontWeight: '700',
       color: theme.text,
       paddingVertical: 6,
     },
     expenseAmountInput: {
-      fontSize: isCompact ? 30 : 34,
+      fontSize: isCompact ? 31 : 35,
       lineHeight: isCompact ? 36 : 40,
       fontWeight: '800',
-      color: theme.text,
+      color: theme.heroText,
       paddingVertical: 4,
       letterSpacing: -0.6,
       flex: 1,
     },
     expenseAmountCard: {
-      backgroundColor: theme.surfaceMuted,
-      borderRadius: 22,
-      paddingHorizontal: 16,
+      backgroundColor: theme.accent,
+      borderRadius: 18,
+      paddingHorizontal: 13,
       paddingTop: 12,
       paddingBottom: 10,
-      borderWidth: 1,
-      borderColor: theme.divider,
+    },
+    expenseAmountLabel: {
+      color: theme.heroText,
+      opacity: 0.65,
+      fontSize: 10,
+      fontWeight: '800',
+      letterSpacing: 1.1,
+      marginBottom: 3,
     },
     expenseAmountRow: {
       flexDirection: 'row',
@@ -10262,59 +12534,140 @@ const createStyles = (
       gap: 4,
     },
     expenseAmountCurrency: {
-      fontSize: isCompact ? 22 : 26,
+      fontSize: isCompact ? 20 : 23,
       fontWeight: '800',
-      color: theme.textMuted,
+      color: theme.heroText,
+      opacity: 0.7,
       letterSpacing: -0.4,
       paddingTop: 4,
     },
     expenseAmountHint: {
-      color: theme.textMuted,
+      color: theme.heroText,
+      opacity: 0.62,
       fontSize: 10,
       fontWeight: '600',
       marginTop: 2,
     },
     quickAmountRow: {
       flexDirection: 'row',
-      gap: 8,
+      gap: 6,
     },
     quickAmountChip: {
       flex: 1,
-      backgroundColor: theme.surfaceSoft,
-      borderRadius: 16,
-      paddingVertical: 12,
+      backgroundColor: 'transparent',
+      borderRadius: 10,
+      paddingVertical: 7,
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: theme.divider,
+      borderWidth: 0,
     },
     quickAmountChipActive: {
-      backgroundColor: theme.accent,
-      borderColor: theme.accent,
+      backgroundColor: theme.accentSoft,
     },
     quickAmountChipText: {
       color: theme.textMuted,
       fontWeight: '800',
-      fontSize: 13,
+      fontSize: 11,
     },
     quickAmountChipTextActive: {
-      color: theme.heroText,
+      color: theme.accentText,
     },
     expenseCategoryChip: {
-      borderRadius: 16,
-      paddingHorizontal: 12,
-      paddingVertical: 9,
+      borderRadius: 13,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
     },
     expenseCategoryChipText: {
-      fontSize: 13,
+      fontSize: 12,
       fontWeight: '700',
       textTransform: 'capitalize',
     },
+    expenseEssentialsCard: {
+      marginTop: 9,
+      padding: 0,
+      gap: 7,
+      borderRadius: 0,
+      backgroundColor: 'transparent',
+      borderWidth: 0,
+    },
+    expenseEssentialsHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    expenseEssentialsTitle: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    expenseEssentialsMeta: {
+      color: theme.textSoft,
+      fontSize: 9,
+      fontWeight: '700',
+    },
+    expenseDateRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      minHeight: 44,
+      paddingHorizontal: 0,
+      paddingVertical: 6,
+      borderRadius: 0,
+      backgroundColor: 'transparent',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.divider,
+    },
+    expenseDetailCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    expenseDetailLabel: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+    expenseDetailValue: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '800',
+      marginTop: 2,
+    },
+    expenseDetailChange: {
+      color: theme.accentText,
+      fontSize: 10,
+      fontWeight: '800',
+    },
+    expenseSubcategoryBlock: {
+      gap: 6,
+      paddingTop: 2,
+    },
+    expenseOptionChip: {
+      borderRadius: 999,
+      paddingHorizontal: 9,
+      paddingVertical: 6,
+      backgroundColor: theme.surfaceMuted,
+      borderWidth: 1,
+      borderColor: theme.divider,
+    },
+    expenseOptionChipActive: {
+      backgroundColor: theme.accentSoft,
+      borderColor: theme.accentBorder,
+    },
+    expenseOptionChipText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    expenseOptionChipTextActive: {
+      color: theme.accentText,
+      fontWeight: '900',
+    },
     expenseSubmitButton: {
       alignSelf: 'stretch',
-      paddingVertical: 16,
-      borderRadius: 22,
-      marginTop: 14,
+      paddingVertical: 12,
+      borderRadius: 16,
+      marginTop: 10,
     },
     expenseSubmitButtonText: {
       fontSize: 16,
@@ -10324,7 +12677,7 @@ const createStyles = (
       flexDirection: 'row',
       gap: 8,
       alignItems: 'center',
-      marginTop: 8,
+      marginTop: 4,
     },
     sheetCloseButton: {
       width: 36,
@@ -10379,13 +12732,15 @@ const createStyles = (
       marginBottom: 2,
     },
     expenseDetailsPanel: {
-      backgroundColor: theme.surfaceMuted,
-      borderRadius: 18,
-      borderWidth: 1,
-      borderColor: theme.divider,
-      padding: 12,
-      gap: 12,
-      marginTop: 10,
+      backgroundColor: 'transparent',
+      borderRadius: 0,
+      borderWidth: 0,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.divider,
+      paddingHorizontal: 0,
+      paddingVertical: 9,
+      gap: 9,
+      marginTop: 6,
     },
     categorySuggestionBlock: {
       marginTop: 4,
@@ -10433,6 +12788,91 @@ const createStyles = (
       gap: 8,
       alignItems: 'center',
       marginBottom: 10,
+    },
+    noBudgetTransactionsPage: {
+      minHeight: 420,
+      backgroundColor: theme.surface,
+      borderRadius: 26,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      paddingHorizontal: 24,
+      paddingVertical: 34,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+    },
+    noBudgetTransactionsIcon: {
+      width: 72,
+      height: 84,
+      borderRadius: 18,
+      backgroundColor: theme.surfaceTint,
+      borderWidth: 2,
+      borderColor: theme.accentBorder,
+      paddingHorizontal: 16,
+      paddingTop: 23,
+      gap: 9,
+      marginBottom: 8,
+      transform: [{ rotate: '-3deg' }],
+    },
+    noBudgetReceiptLine: {
+      height: 4,
+      borderRadius: 999,
+      backgroundColor: theme.accent,
+      opacity: 0.62,
+    },
+    noBudgetReceiptLineShort: {
+      width: '68%',
+    },
+    noBudgetReceiptDot: {
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+      backgroundColor: theme.accent,
+      alignSelf: 'flex-end',
+      marginTop: 3,
+    },
+    noBudgetTransactionsEyebrow: {
+      color: theme.accentText,
+      fontSize: 10,
+      fontWeight: '900',
+      letterSpacing: 1.2,
+    },
+    noBudgetTransactionsTitle: {
+      color: theme.text,
+      fontSize: 24,
+      lineHeight: 29,
+      fontWeight: '800',
+      textAlign: 'center',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      maxWidth: 320,
+    },
+    noBudgetTransactionsText: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 18,
+      textAlign: 'center',
+      maxWidth: 330,
+    },
+    noBudgetTransactionsButton: {
+      minHeight: 48,
+      minWidth: 190,
+      borderRadius: 16,
+      backgroundColor: theme.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 20,
+      marginTop: 7,
+    },
+    noBudgetTransactionsButtonText: {
+      color: theme.heroText,
+      fontSize: 14,
+      fontWeight: '900',
+    },
+    noBudgetTransactionsCopy: {
+      color: theme.accentText,
+      fontSize: 11,
+      fontWeight: '800',
+      padding: 7,
     },
     activityHeroCard: {
       backgroundColor: theme.surface,
@@ -10553,6 +12993,73 @@ const createStyles = (
     tertiaryButtonText: {
       color: theme.accentText,
       fontSize: 10,
+      fontWeight: '800',
+    },
+    confirmBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(19, 16, 18, 0.38)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 20,
+    },
+    confirmDismissArea: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    confirmCard: {
+      width: '100%',
+      maxWidth: 390,
+      backgroundColor: theme.surface,
+      borderRadius: 24,
+      padding: 20,
+      gap: 10,
+      shadowColor: theme.shadow,
+      shadowOpacity: 0.14,
+      shadowRadius: 22,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 12,
+    },
+    confirmEyebrow: {
+      color: theme.alertText,
+      fontSize: 10,
+      fontWeight: '800',
+      letterSpacing: 1.1,
+    },
+    confirmTitle: {
+      color: theme.text,
+      fontSize: 21,
+      fontWeight: '800',
+    },
+    confirmText: {
+      color: theme.textMuted,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    confirmActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 10,
+      marginTop: 8,
+    },
+    confirmCancelButton: {
+      borderRadius: 999,
+      backgroundColor: theme.surfaceMuted,
+      paddingHorizontal: 16,
+      paddingVertical: 11,
+    },
+    confirmCancelText: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    confirmDeleteButton: {
+      borderRadius: 999,
+      backgroundColor: theme.alertSurface,
+      paddingHorizontal: 16,
+      paddingVertical: 11,
+    },
+    confirmDeleteText: {
+      color: theme.alertText,
+      fontSize: 12,
       fontWeight: '800',
     },
     sheetBackdrop: {
@@ -10967,25 +13474,217 @@ const createStyles = (
     },
     bottomNav: {
       flexDirection: 'row',
-      gap: 6,
-      paddingHorizontal: isCompact ? 12 : 16,
-      paddingTop: 7,
-      paddingBottom: 12,
+      gap: 4,
+      padding: 6,
+      marginHorizontal: 12,
+      marginTop: 4,
+      marginBottom: 8,
       backgroundColor: theme.surface,
-      borderTopWidth: 1,
-      borderTopColor: theme.divider,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      shadowColor: theme.shadow,
+      shadowOpacity: 0.14,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 5 },
+      elevation: 8,
+    },
+    quickAddFab: {
+      position: 'absolute',
+      right: 20,
+      bottom: 84,
+      zIndex: 20,
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.accent,
+      borderWidth: 3,
+      borderColor: theme.background,
+      shadowColor: theme.shadow,
+      shadowOpacity: 0.24,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 5 },
+      elevation: 10,
+    },
+    quickAddFabText: {
+      color: theme.heroText,
+      fontSize: 25,
+      lineHeight: 27,
+      fontWeight: '500',
+    },
+    quickAddBackdrop: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      backgroundColor: 'rgba(18, 33, 29, 0.28)',
+    },
+    quickAddDismissArea: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    quickAddMenu: {
+      marginHorizontal: 18,
+      marginBottom: 90,
+      backgroundColor: theme.surface,
+      borderRadius: 20,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      shadowColor: theme.shadow,
+      shadowOpacity: 0.2,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 12,
+    },
+    quickAddEyebrow: {
+      color: theme.textSoft,
+      fontSize: 9,
+      fontWeight: '900',
+      letterSpacing: 1.1,
+      paddingHorizontal: 10,
+      paddingTop: 4,
+      paddingBottom: 5,
+    },
+    quickAddOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+      paddingHorizontal: 9,
+      paddingVertical: 9,
+      borderRadius: 14,
+    },
+    quickAddOptionMark: {
+      width: 34,
+      height: 34,
+      borderRadius: 11,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.accentSoft,
+    },
+    quickAddIncomeMark: {
+      backgroundColor: theme.successSurface,
+    },
+    quickAddOptionMarkText: {
+      color: theme.accentText,
+      fontSize: 14,
+      fontWeight: '900',
+    },
+    quickAddIncomeMarkText: {
+      color: theme.successText,
+      fontSize: 17,
+      fontWeight: '900',
+    },
+    quickAddOptionCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    quickAddOptionTitle: {
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '800',
+    },
+    quickAddOptionText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      marginTop: 1,
     },
     bottomNavItem: {
       flex: 1,
-      borderRadius: 12,
-      paddingVertical: 8,
-      paddingHorizontal: 6,
+      borderRadius: 16,
+      paddingVertical: 7,
+      paddingHorizontal: 4,
       backgroundColor: 'transparent',
       alignItems: 'center',
-      gap: 6,
+      gap: 3,
     },
     bottomNavItemActive: {
-      backgroundColor: 'transparent',
+      backgroundColor: theme.accentSoft,
+    },
+    navIconCanvas: {
+      width: 22,
+      height: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    navWallet: {
+      width: 19,
+      height: 14,
+      borderRadius: 4,
+      justifyContent: 'center',
+    },
+    navWalletFlap: {
+      position: 'absolute',
+      width: 9,
+      height: 7,
+      right: -2,
+      borderRadius: 3,
+      backgroundColor: theme.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    navWalletDot: {
+      width: 2.5,
+      height: 2.5,
+      borderRadius: 2,
+    },
+    navReceipt: {
+      width: 16,
+      height: 19,
+      borderRadius: 3,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+    },
+    navReceiptLine: {
+      width: 9,
+      height: 1.5,
+      borderRadius: 1,
+    },
+    navReceiptLineShort: {
+      width: 6,
+      height: 1.5,
+      borderRadius: 1,
+      alignSelf: 'flex-start',
+      marginLeft: 3,
+    },
+    navPie: {
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      overflow: 'hidden',
+    },
+    navPieVertical: {
+      position: 'absolute',
+      width: 1.6,
+      height: 9,
+      top: -1,
+      left: 8,
+    },
+    navPieHorizontal: {
+      position: 'absolute',
+      width: 9,
+      height: 1.6,
+      top: 8,
+      right: -1,
+    },
+    navSliderRow: {
+      width: 19,
+      height: 6,
+      justifyContent: 'center',
+    },
+    navSliderLine: {
+      width: 19,
+      height: 1.6,
+      borderRadius: 1,
+    },
+    navSliderKnob: {
+      position: 'absolute',
+      width: 5,
+      height: 5,
+      borderRadius: 3,
+      top: 0.5,
+      borderWidth: 1,
+      borderColor: theme.surface,
     },
     bottomNavMarker: {
       width: 24,
@@ -10997,21 +13696,31 @@ const createStyles = (
     bottomNavMarkerActive: {
       backgroundColor: theme.accent,
     },
-    bottomNavIcon: {
-      fontSize: 19,
-      lineHeight: 22,
-      opacity: 0.55,
-      color: theme.textMuted,
+    bottomNavIconWrap: {
+      width: 32,
+      height: 25,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
-    bottomNavIconActive: {
-      fontSize: 19,
-      opacity: 1,
-      color: theme.accent,
+    bottomNavIconWrapActive: {
+      backgroundColor: theme.surface,
+    },
+    bottomNavSetupDot: {
+      position: 'absolute',
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      right: 3,
+      top: 2,
+      backgroundColor: theme.warningText,
+      borderWidth: 1,
+      borderColor: theme.surface,
     },
     bottomNavText: {
       color: theme.textMuted,
-      fontWeight: '800',
-      fontSize: isNarrow ? 10 : 11,
+      fontWeight: '700',
+      fontSize: isNarrow ? 9 : 10,
     },
     bottomNavTextActive: {
       color: theme.accent,
@@ -11337,54 +14046,418 @@ const createStyles = (
       fontSize: 11,
       fontWeight: '800',
     },
-    categoryDetailCard: {
-      backgroundColor: theme.surfaceMuted,
-      borderRadius: 20,
-      borderWidth: 1,
-      borderColor: theme.divider,
-      padding: 14,
-      gap: 12,
-      marginBottom: 12,
+    categoryDetailSheet: {
+      paddingHorizontal: 14,
+      paddingBottom: 16,
+      height: '90%',
+      maxHeight: '92%',
     },
-    categoryDetailStats: {
+    incomeSheet: {
+      paddingBottom: 18,
+    },
+    incomeForm: {
+      paddingHorizontal: 16,
+      gap: 14,
+    },
+    incomeAmountCard: {
+      marginTop: 2,
+    },
+    incomeHint: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+    },
+    incomeSaveButton: {
+      minHeight: 48,
+      borderRadius: 15,
+      backgroundColor: theme.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 16,
+    },
+    incomeSaveButtonText: {
+      color: theme.heroText,
+      fontSize: 13,
+      fontWeight: '900',
+    },
+    categoryDetailHeader: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
+      alignItems: 'center',
+      gap: 10,
+      paddingBottom: 10,
     },
-    categoryDetailStat: {
-      flexBasis: isCompact ? '48%' : 0,
-      flexGrow: 1,
-      backgroundColor: theme.surface,
-      borderRadius: 14,
+    categoryDetailHeaderIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    categoryDetailHeaderIconText: {
+      fontSize: 15,
+      fontWeight: '900',
+    },
+    categoryDetailHeaderCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    categoryDetailHeaderActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+    },
+    categoryDetailEditButton: {
+      minHeight: 32,
+      justifyContent: 'center',
       paddingHorizontal: 10,
-      paddingVertical: 9,
+      borderRadius: 10,
+      backgroundColor: theme.accentSoft,
     },
-    categoryDetailStatLabel: {
+    categoryDetailEditButtonText: {
+      color: theme.accentText,
+      fontSize: 11,
+      fontWeight: '900',
+    },
+    categoryDetailEyebrow: {
+      color: theme.textSoft,
+      fontSize: 9,
+      fontWeight: '900',
+      letterSpacing: 1.1,
+    },
+    categoryDetailTitle: {
+      color: theme.text,
+      fontSize: 18,
+      lineHeight: 22,
+      fontWeight: '800',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      marginTop: 1,
+    },
+    categoryDetailHeaderMeta: {
       color: theme.textMuted,
       fontSize: 10,
       fontWeight: '700',
-      marginBottom: 4,
+      marginTop: 2,
     },
-    categoryDetailStatValue: {
+    categoryDetailContent: {
+      paddingBottom: 4,
+      gap: 10,
+    },
+    categoryDetailHero: {
+      backgroundColor: theme.surfaceMuted,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      padding: 13,
+      gap: 8,
+    },
+    categoryDetailHeroEyebrow: {
+      color: theme.textSoft,
+      fontSize: 9,
+      fontWeight: '900',
+      letterSpacing: 1,
+    },
+    categoryDetailAmountRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      justifyContent: 'space-between',
+      gap: 16,
+    },
+    categoryDetailSpentBlock: {
+      flex: 1,
+      minWidth: 0,
+    },
+    categoryDetailSpentValue: {
+      color: theme.text,
+      fontSize: isCompact ? 28 : 31,
+      lineHeight: isCompact ? 32 : 35,
+      fontWeight: '900',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      letterSpacing: -0.6,
+    },
+    categoryDetailSpentLabel: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '700',
+      marginTop: 1,
+    },
+    categoryDetailRemainingBlock: {
+      alignItems: 'flex-end',
+      paddingBottom: 3,
+    },
+    categoryDetailRemainingValue: {
+      color: theme.text,
+      fontSize: 15,
+      fontWeight: '900',
+    },
+    categoryDetailRemainingLabel: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '700',
+      marginTop: 1,
+    },
+    categoryDetailRemainingAlert: {
+      color: theme.alertText,
+    },
+    categoryDetailTrack: {
+      height: 6,
+      borderRadius: 999,
+      overflow: 'hidden',
+    },
+    categoryDetailFill: {
+      height: '100%',
+      borderRadius: 999,
+    },
+    categoryDetailHeroFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    categoryDetailHeroMeta: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+    categoryDetailActions: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    categoryDetailPrimaryAction: {
+      flex: 1,
+      minHeight: 40,
+      borderRadius: 13,
+      backgroundColor: theme.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+    },
+    categoryDetailPrimaryActionText: {
+      color: theme.heroText,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    categoryDetailSecondaryAction: {
+      flex: 1,
+      minHeight: 40,
+      borderRadius: 13,
+      backgroundColor: theme.surfaceTint,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+    },
+    categoryDetailSecondaryActionText: {
+      color: theme.accentText,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    categoryDetailSubcategories: {
+      backgroundColor: theme.surface,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      padding: 12,
+      gap: 11,
+    },
+    categoryDetailSubcategoryHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    categoryDetailSubcategoryTitle: {
+      color: theme.text,
+      fontSize: 16,
+      fontWeight: '800',
+      marginTop: 2,
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+    },
+    categoryDetailSubcategoryAdd: {
+      paddingHorizontal: 9,
+      paddingVertical: 7,
+      borderRadius: 10,
+      backgroundColor: theme.surface,
+    },
+    categoryDetailSubcategoryAddText: {
+      color: theme.accentText,
+      fontSize: 11,
+      fontWeight: '900',
+    },
+    categoryDetailSubcategoryList: {
+      borderRadius: 15,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      overflow: 'hidden',
+    },
+    categoryDetailSubcategoryRow: {
+      minHeight: 58,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+      backgroundColor: theme.surfaceMuted,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.divider,
+    },
+    categoryDetailSubcategoryIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 11,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    categoryDetailSubcategoryIconText: {
+      fontSize: 13,
+      fontWeight: '900',
+    },
+    categoryDetailSubcategoryCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    categoryDetailSubcategoryName: {
       color: theme.text,
       fontSize: 13,
       fontWeight: '800',
     },
-    categoryDetailTransactionList: {
+    categoryDetailSubcategoryMeta: {
+      color: theme.textMuted,
+      fontSize: 10,
+      marginTop: 2,
+    },
+    categoryDetailSubcategoryAmountBlock: {
+      alignItems: 'flex-end',
+    },
+    categoryDetailSubcategoryAmount: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    categoryDetailSubcategoryAmountLabel: {
+      color: theme.textMuted,
+      fontSize: 9,
+      fontWeight: '700',
+      marginTop: 1,
+    },
+    categoryDetailSubcategoryQuickAdd: {
+      width: 30,
+      height: 30,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.accentSoft,
+    },
+    categoryDetailSubcategoryQuickAddText: {
+      color: theme.accentText,
+      fontSize: 16,
+      lineHeight: 17,
+      fontWeight: '900',
+    },
+    categoryDetailSubcategoryEmpty: {
+      borderRadius: 14,
+      paddingHorizontal: 13,
+      paddingVertical: 14,
+      backgroundColor: theme.surfaceTint,
+      borderWidth: 1,
+      borderColor: theme.divider,
+    },
+    categoryDetailSubcategoryEmptyTitle: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    categoryDetailSubcategoryEmptyText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+      marginTop: 3,
+    },
+    categoryDetailSubcategoryComposer: {
+      gap: 6,
+      padding: 10,
+      borderRadius: 14,
+      backgroundColor: theme.surfaceTint,
+      borderWidth: 1,
+      borderColor: theme.accentBorder,
+    },
+    categoryDetailSubcategoryComposerLabel: {
+      color: theme.textSoft,
+      fontSize: 9,
+      fontWeight: '900',
+      letterSpacing: 0.8,
+    },
+    categoryDetailSubcategoryComposerRow: {
+      alignItems: 'stretch',
+      gap: 7,
+    },
+    categoryDetailSubcategoryInput: {
+      width: '100%',
+      minHeight: 38,
+      borderRadius: 11,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.accentBorder,
+      color: theme.text,
+      fontSize: 12,
+      paddingHorizontal: 11,
+      paddingVertical: 8,
+    },
+    categoryDetailSubcategorySave: {
+      minHeight: 42,
+      borderRadius: 11,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+      backgroundColor: theme.accent,
+    },
+    categoryDetailSubcategorySaveText: {
+      color: theme.heroText,
+      fontSize: 11,
+      fontWeight: '900',
+    },
+    categoryDetailActivity: {
       gap: 10,
-      marginTop: 10,
+      paddingTop: 2,
+    },
+    categoryDetailSectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    categoryDetailSectionEyebrow: {
+      color: theme.textSoft,
+      fontSize: 9,
+      fontWeight: '900',
+      letterSpacing: 1,
+    },
+    categoryDetailSectionTitle: {
+      color: theme.text,
+      fontSize: 16,
+      fontWeight: '800',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      marginTop: 2,
+    },
+    categoryDetailSectionCount: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+    categoryDetailTransactionList: {
+      backgroundColor: theme.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      overflow: 'hidden',
     },
     categoryDetailTransactionRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
       gap: 12,
-      backgroundColor: theme.surfaceMuted,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: theme.divider,
       paddingHorizontal: 12,
-      paddingVertical: 10,
+      paddingVertical: 11,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.divider,
     },
     categoryDetailTransactionCopy: {
       flex: 1,

@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   buildIsoDateForMonth,
   ensureCurrentMonth,
+  getTotalIncome,
+  getTotalSpent,
   getProjectedSpend,
   isValidMonthId,
   normalizeBudgetAppState,
@@ -25,6 +27,7 @@ const buildCategory = (overrides: Partial<Category> = {}): Category => ({
 
 const buildTransaction = (overrides: Partial<Transaction> = {}): Transaction => ({
   id: overrides.id ?? 'txn-1',
+  kind: overrides.kind,
   categoryId: overrides.categoryId ?? 'cat-1',
   subcategory: overrides.subcategory,
   accountId: overrides.accountId,
@@ -206,4 +209,23 @@ test('isValidMonthId accepts calendar months only', () => {
   assert.equal(isValidMonthId('2026-00'), false);
   assert.equal(isValidMonthId('2026-13'), false);
   assert.equal(isValidMonthId('April 2026'), false);
+});
+
+test('income is tracked separately and does not inflate spending', () => {
+  const month = buildMonth({
+    categories: [buildCategory()],
+    transactions: [
+      buildTransaction({ amount: 100, kind: 'expense' }),
+      buildTransaction({
+        id: 'income-1',
+        kind: 'income',
+        categoryId: '__income__',
+        amount: 500,
+        note: 'Salary',
+      }),
+    ],
+  });
+
+  assert.equal(getTotalSpent(month), 100);
+  assert.equal(getTotalIncome(month), 500);
 });

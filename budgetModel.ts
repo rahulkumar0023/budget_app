@@ -5,6 +5,7 @@ export type LanguageCode = string;
 export type BudgetTone = 'good' | 'warning' | 'alert';
 export type MonthlyLimit = string;
 export type CategoryBucket = 'needs' | 'wants' | 'savings';
+export type TransactionKind = 'expense' | 'income';
 
 export type AppTheme = {
   id: AppThemeId;
@@ -78,6 +79,7 @@ export type BankAccount = {
 
 export type Transaction = {
   id: string;
+  kind?: TransactionKind;
   categoryId: string;
   subcategory?: string;
   accountId?: string;
@@ -191,6 +193,7 @@ export type CategorySummary = {
 
 export const LOCAL_STORAGE_KEY = 'budget-buddy:app-state:v2';
 export const LEGACY_STORAGE_KEY = 'budget-buddy:dashboard-state:v1';
+export const INCOME_CATEGORY_ID = '__income__';
 export const getUserStorageKey = (userId: string) => `${LOCAL_STORAGE_KEY}:user:${userId}`;
 export const defaultCurrencyCode: CurrencyCode = 'USD';
 export const defaultLanguageCode: LanguageCode = 'en';
@@ -1525,7 +1528,13 @@ const normalizeTransaction = (value: unknown): Transaction | null => {
     return null;
   }
 
-  const categoryId = typeof value.categoryId === 'string' ? value.categoryId : '';
+  const kind: TransactionKind = value.kind === 'income' ? 'income' : 'expense';
+  const categoryId =
+    kind === 'income'
+      ? INCOME_CATEGORY_ID
+      : typeof value.categoryId === 'string'
+        ? value.categoryId
+        : '';
   const amount = toFiniteNumber(value.amount);
   const happenedAt = typeof value.happenedAt === 'string' ? value.happenedAt : '';
 
@@ -1540,6 +1549,7 @@ const normalizeTransaction = (value: unknown): Transaction | null => {
 
   return {
     id: typeof value.id === 'string' && value.id ? value.id : createId('txn'),
+    kind,
     categoryId,
     subcategory:
       typeof value.subcategory === 'string' && value.subcategory.trim()
@@ -1594,7 +1604,8 @@ const normalizeMonthRecord = (
     ? value.transactions
         .map((item) => normalizeTransaction(item))
         .filter(
-          (item): item is Transaction => item !== null && categoryIds.has(item.categoryId),
+          (item): item is Transaction =>
+            item !== null && (item.kind === 'income' || categoryIds.has(item.categoryId)),
         )
     : [];
 
@@ -1707,7 +1718,7 @@ export const rollMonthForward = (sourceMonth: MonthRecord, targetMonthId: string
   });
 
   const transactions = sourceMonth.transactions
-    .filter((transaction) => transaction.recurring)
+    .filter((transaction) => transaction.kind !== 'income' && transaction.recurring)
     .map((transaction) =>
       copyRecurringTransaction(transaction, sourceMonth.id, targetMonthId, categoryIdMap),
     )
@@ -1931,7 +1942,9 @@ const getWeekBucket = (date: Date) => {
 };
 
 export const getWeeklyTotals = (transactions: Transaction[]) =>
-  transactions.reduce<[number, number, number, number]>(
+  transactions.filter((transaction) => transaction.kind !== 'income').reduce<
+    [number, number, number, number]
+  >(
     (totals, transaction) => {
       const bucket = getWeekBucket(new Date(transaction.happenedAt));
       const nextTotals = [...totals] as [number, number, number, number];
@@ -1968,7 +1981,14 @@ export const getTotalPlanned = (month: MonthRecord) =>
   month.categories.reduce((sum, category) => sum + category.planned, 0);
 
 export const getTotalSpent = (month: MonthRecord) =>
-  month.transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
+  month.transactions
+    .filter((transaction) => transaction.kind !== 'income')
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+
+export const getTotalIncome = (month: MonthRecord) =>
+  month.transactions
+    .filter((transaction) => transaction.kind === 'income')
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
 
 export const getTopCategory = (summaries: CategorySummary[]) =>
   summaries.reduce<CategorySummary | null>(
@@ -1978,7 +1998,7 @@ export const getTopCategory = (summaries: CategorySummary[]) =>
 
 export const getPaceDrivenSpend = (month: MonthRecord) =>
   month.transactions
-    .filter((transaction) => !transaction.recurring)
+    .filter((transaction) => transaction.kind !== 'income' && !transaction.recurring)
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
 export const getProjectedCategorySpend = (

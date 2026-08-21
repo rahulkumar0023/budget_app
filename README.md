@@ -15,9 +15,14 @@ Budget Buddy is a simple Expo React Native app to help users track monthly budge
 
 - Set a monthly budget limit per category
 - Add, edit and remove expense entries
+- Add expenses from inside a category with amount, description, date, and optional subcategory
 - View planned, spent, and remaining totals per category
 - Monthly summary and simple charts
 - Optional Firebase backup and authentication
+
+## Expense-entry design
+
+Expense entry uses a compact, amount-first flow designed for quick mobile use. The amount is the only prominent card, while description, date, and advanced options use open rows with subtle dividers instead of nested boxes. Date is always visible, subcategories appear when available, and account or repeat settings remain under **More options**. Opening the form from a category keeps that category selected; opening it from a subcategory selects both automatically.
 
 ## Architecture
 

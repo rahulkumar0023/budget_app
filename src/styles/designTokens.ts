@@ -157,7 +157,228 @@ export const componentSizes = {
 };
 
 /**
- * Light Theme
+ * BUDGET BUDDY THEME (Indigo) - Light
+ */
+export const budgetBuddyLight = {
+  // Base
+  background: '#FAFAF8',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F5F3F0',
+
+  // Primary Brand
+  primary: '#2F7D62',
+  primaryDark: '#1B4D37',
+  primaryLight: '#E8F5E9',
+
+  // Accents & Status
+  accent: '#D4A574',
+  success: '#4CAF50',
+  warning: '#FFA726',
+  error: '#E53935',
+
+  // Text
+  text: '#1A1A1A',
+  textSecondary: '#424242',
+  textTertiary: '#757575',
+  textDisabled: '#BDBDBD',
+  textInverse: '#FFFFFF',
+
+  // Borders
+  border: '#E0E0E0',
+  divider: '#F0F0F0',
+};
+
+/**
+ * BUDGET BUDDY THEME (Indigo) - Dark
+ */
+export const budgetBuddyDark = {
+  background: '#0D1B17',
+  surface: '#1A2D27',
+  surfaceAlt: '#254F47',
+
+  primary: '#4CAF50',
+  primaryDark: '#2E7D3E',
+  primaryLight: '#A5D6A7',
+
+  accent: '#FFD54F',
+  success: '#4CAF50',
+  warning: '#FFA726',
+  error: '#E53935',
+
+  text: '#E8F5E9',
+  textSecondary: '#B0BEC5',
+  textTertiary: '#78909C',
+  textDisabled: '#546E7A',
+  textInverse: '#0D1B17',
+
+  border: '#2F7D62',
+  divider: '#254F47',
+};
+
+/**
+ * GARDEN FRESH THEME (Teal) - Light
+ */
+export const gardenFreshLight = {
+  background: '#F0F7F7',
+  surface: '#FFFFFF',
+  surfaceAlt: '#E0F2F1',
+
+  primary: '#00897B',
+  primaryDark: '#00695C',
+  primaryLight: '#B2DFDB',
+
+  accent: '#4FC3F7',
+  success: '#26A69A',
+  warning: '#FFA726',
+  error: '#EF5350',
+
+  text: '#004D40',
+  textSecondary: '#455A64',
+  textTertiary: '#78909C',
+  textDisabled: '#B0BEC5',
+  textInverse: '#FFFFFF',
+
+  border: '#B2DFDB',
+  divider: '#E0F2F1',
+};
+
+/**
+ * GARDEN FRESH THEME (Teal) - Dark
+ */
+export const gardenFreshDark = {
+  background: '#0D2C2A',
+  surface: '#1B4F4B',
+  surfaceAlt: '#2A6B67',
+
+  primary: '#4DB8AC',
+  primaryDark: '#26A69A',
+  primaryLight: '#B2DFDB',
+
+  accent: '#80DEEA',
+  success: '#4DB8AC',
+  warning: '#FFA726',
+  error: '#EF5350',
+
+  text: '#E0F2F1',
+  textSecondary: '#B2DFDB',
+  textTertiary: '#80DEEA',
+  textDisabled: '#546E7A',
+  textInverse: '#0D2C2A',
+
+  border: '#4DB8AC',
+  divider: '#2A6B67',
+};
+
+/**
+ * WARM CLAY THEME (Terracotta) - Light
+ */
+export const warmClayLight = {
+  background: '#FFFAF0',
+  surface: '#FFFFFF',
+  surfaceAlt: '#FFEAA7',
+
+  primary: '#C85A1B',
+  primaryDark: '#8B4513',
+  primaryLight: '#FFE5CC',
+
+  accent: '#E8B04B',
+  success: '#6D8659',
+  warning: '#F5A623',
+  error: '#D64545',
+
+  text: '#3E2723',
+  textSecondary: '#5D4E37',
+  textTertiary: '#9D8B7E',
+  textDisabled: '#D7CCC8',
+  textInverse: '#FFFFFF',
+
+  border: '#E8B04B',
+  divider: '#FFE5CC',
+};
+
+/**
+ * WARM CLAY THEME (Terracotta) - Dark
+ */
+export const warmClayDark = {
+  background: '#2D1810',
+  surface: '#4A2C1A',
+  surfaceAlt: '#6B3E25',
+
+  primary: '#FF8A65',
+  primaryDark: '#D84315',
+  primaryLight: '#FFAB91',
+
+  accent: '#FFD54F',
+  success: '#AED581',
+  warning: '#FFB74D',
+  error: '#E57373',
+
+  text: '#FFE5CC',
+  textSecondary: '#FFCC99',
+  textTertiary: '#FFB366',
+  textDisabled: '#996633',
+  textInverse: '#2D1810',
+
+  border: '#FF8A65',
+  divider: '#6B3E25',
+};
+
+/**
+ * FOREST NIGHT THEME (Emerald) - Light (rarely used)
+ */
+export const forestNightLight = {
+  background: '#F5F5F5',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F0F0F0',
+
+  primary: '#1B5E20',
+  primaryDark: '#0D3818',
+  primaryLight: '#C8E6C9',
+
+  accent: '#FFD54F',
+  success: '#4CAF50',
+  warning: '#FFA726',
+  error: '#D32F2F',
+
+  text: '#1B5E20',
+  textSecondary: '#388E3C',
+  textTertiary: '#558B2F',
+  textDisabled: '#9CCC65',
+  textInverse: '#FFFFFF',
+
+  border: '#E0E0E0',
+  divider: '#F0F0F0',
+};
+
+/**
+ * FOREST NIGHT THEME (Emerald) - Dark (Primary for this theme)
+ */
+export const forestNightDark = {
+  background: '#0D2D2A',
+  surface: '#1A3A38',
+  surfaceAlt: '#254F4D',
+
+  primary: '#2EBF7E',
+  primaryDark: '#1BA558',
+  primaryLight: '#D4F8E8',
+
+  accent: '#FFD700',
+  success: '#4CAF50',
+  warning: '#FFA726',
+  error: '#FF5252',
+
+  text: '#E8F5E9',
+  textSecondary: '#B0BEC5',
+  textTertiary: '#78909C',
+  textDisabled: '#546E7A',
+  textInverse: '#0D2D2A',
+
+  border: '#2EBF7E',
+  divider: '#254F4D',
+};
+
+/**
+ * Generic Light Theme (Fallback)
  */
 export const lightTheme = {
   // Backgrounds
@@ -193,7 +414,7 @@ export const lightTheme = {
 };
 
 /**
- * Dark Theme
+ * Generic Dark Theme (Fallback)
  */
 export const darkTheme = {
   // Backgrounds

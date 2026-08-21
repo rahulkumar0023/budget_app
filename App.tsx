@@ -5600,8 +5600,7 @@ export default function App() {
 
   const renderSimplePlanScreen = () => !hasActiveBudget || isBudgetSetupActive ? renderEmptyPlanBuilder() : (
     <View style={styles.simplePlanPage}>
-      <Card variant="filled" padding={spacing.lg}>
-        <View style={styles.planAmountPanel}>
+      <View style={styles.planAmountPanel}>
         <View style={styles.planAmountHeader}>
           <View>
             <Text style={styles.settingsGroupLabel}>MONTHLY BUDGET</Text>
@@ -5654,8 +5653,7 @@ export default function App() {
             <Text style={styles.planDeleteBudgetText}>Delete {activeMonthName} budget</Text>
           </Pressable>
         ) : null}
-        </View>
-      </Card>
+      </View>
 
       <View style={styles.planListHeader}>
         <View>
@@ -5695,8 +5693,7 @@ export default function App() {
           visiblePlanCategorySummaries.map((summary, index) => {
             const theme = categoryThemes[summary.category.themeId];
             return (
-              <Card key={summary.category.id} variant="surface" padding={spacing.lg}>
-              <View style={styles.planCategoryRow}>
+              <View key={summary.category.id} style={styles.planCategoryRow}>
                 <View style={styles.planCategoryMainRow}>
                   <View style={[styles.planCategoryIcon, { backgroundColor: theme.bubble }]}>
                     <Text style={[styles.planCategoryIconText, { color: theme.bubbleText }]}>
@@ -5768,7 +5765,6 @@ export default function App() {
                   )}
                 </View>
               </View>
-              </Card>
             );
           })
         )}

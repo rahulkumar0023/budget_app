@@ -5,6 +5,8 @@ import {
   buildIsoDateForMonth,
   ensureCurrentMonth,
   getProjectedSpend,
+  isValidMonthId,
+  normalizeBudgetAppState,
   type BudgetAppState,
   type Category,
   type MonthRecord,
@@ -129,4 +131,79 @@ test('ensureCurrentMonth rolls recurring categories and transactions into the ne
   assert.equal(aprilMonth?.transactions.length, 1);
   assert.equal(aprilMonth?.categories[0]?.name, 'Rent');
   assert.match(aprilMonth?.transactions[0]?.happenedAt ?? '', /^2026-04-03T/);
+});
+
+test('ensureCurrentMonth creates the current month when only a future plan exists', () => {
+  const state: BudgetAppState = {
+    version: 5,
+    activeMonthId: 'missing',
+    months: [buildMonth({ id: '2026-06' })],
+    accounts: [],
+    goals: [],
+    preferences: {
+      appThemeId: 'indigo',
+      cloudBackupEnabled: false,
+      currencyCode: 'EUR',
+      languageCode: 'en',
+      recentCurrencyCodes: [],
+      recentLanguageCodes: [],
+    },
+    updatedAt: Date.now(),
+  };
+
+  const ensured = ensureCurrentMonth(state, new Date('2026-04-09T12:00:00.000Z'));
+
+  assert.equal(ensured.activeMonthId, '2026-04');
+  assert.ok(ensured.months.some((month) => month.id === '2026-04'));
+  assert.ok(ensured.months.some((month) => month.id === '2026-06'));
+});
+
+test('normalizeBudgetAppState drops malformed restored data without inventing recent locales', () => {
+  const normalized = normalizeBudgetAppState(
+    {
+      version: 5,
+      activeMonthId: '2026-04',
+      months: [
+        {
+          ...buildMonth({
+            categories: [buildCategory()],
+            transactions: [
+              buildTransaction(),
+              buildTransaction({ id: 'bad-date', happenedAt: 'not-a-date' }),
+              buildTransaction({ id: 'orphan', categoryId: 'missing-category' }),
+            ],
+          }),
+          monthlyLimit: 'Infinity',
+        },
+        buildMonth({ id: '2026-13' }),
+      ],
+      accounts: [],
+      goals: [],
+      preferences: {
+        appThemeId: 'indigo',
+        cloudBackupEnabled: false,
+        currencyCode: 'EUR',
+        languageCode: 'en',
+        recentCurrencyCodes: ['EUR', 'invalid', 'EUR'],
+        recentLanguageCodes: ['fr', 'invalid', 'fr'],
+      },
+      updatedAt: Date.now(),
+    },
+    new Date('2026-04-09T12:00:00.000Z'),
+  );
+
+  assert.ok(normalized);
+  assert.deepEqual(normalized.preferences.recentCurrencyCodes, ['EUR']);
+  assert.deepEqual(normalized.preferences.recentLanguageCodes, ['fr']);
+  assert.equal(normalized.months.length, 1);
+  assert.equal(normalized.months[0]?.monthlyLimit, '0');
+  assert.deepEqual(normalized.months[0]?.transactions.map((transaction) => transaction.id), ['txn-1']);
+});
+
+test('isValidMonthId accepts calendar months only', () => {
+  assert.equal(isValidMonthId('2026-01'), true);
+  assert.equal(isValidMonthId('2026-12'), true);
+  assert.equal(isValidMonthId('2026-00'), false);
+  assert.equal(isValidMonthId('2026-13'), false);
+  assert.equal(isValidMonthId('April 2026'), false);
 });

@@ -1087,7 +1087,11 @@ export const normalizeLanguageCode = (
     ? value.trim().toLowerCase()
     : fallback;
 
-const normalizeRecentCodes = (value: unknown, normalizeCode: (input: unknown) => string) => {
+const normalizeRecentCodes = (
+  value: unknown,
+  normalizeCode: (input: unknown) => string,
+  isSupported: (code: string) => boolean,
+) => {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -1096,7 +1100,7 @@ const normalizeRecentCodes = (value: unknown, normalizeCode: (input: unknown) =>
 
   value.forEach((item) => {
     const normalized = normalizeCode(item);
-    if (normalized) {
+    if (normalized && isSupported(normalized)) {
       uniqueCodes.add(normalized);
     }
   });
@@ -1129,6 +1133,9 @@ export const getMonthId = (date: Date) => {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   return `${date.getFullYear()}-${month}`;
 };
+
+export const isValidMonthId = (monthId: unknown): monthId is string =>
+  typeof monthId === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(monthId);
 
 export const parseMonthId = (monthId: string) => {
   const [yearText, monthText] = monthId.split('-');
@@ -1447,8 +1454,16 @@ const normalizePreferences = (value: unknown): AppPreferences => {
     cloudBackupEnabled: typeof value.cloudBackupEnabled === 'boolean' ? value.cloudBackupEnabled : false,
     currencyCode: normalizeCurrencyCode(value.currencyCode),
     languageCode: normalizeLanguageCode(value.languageCode),
-    recentCurrencyCodes: normalizeRecentCodes(value.recentCurrencyCodes, normalizeCurrencyCode),
-    recentLanguageCodes: normalizeRecentCodes(value.recentLanguageCodes, normalizeLanguageCode),
+    recentCurrencyCodes: normalizeRecentCodes(
+      value.recentCurrencyCodes,
+      (item) => normalizeCurrencyCode(item, ''),
+      (code) => currencyOptions.some((option) => option.code === code),
+    ),
+    recentLanguageCodes: normalizeRecentCodes(
+      value.recentLanguageCodes,
+      (item) => normalizeLanguageCode(item, ''),
+      (code) => languageOptions.some((option) => option.code === code),
+    ),
   };
 };
 
@@ -1512,7 +1527,12 @@ const normalizeTransaction = (value: unknown): Transaction | null => {
   const amount = toFiniteNumber(value.amount);
   const happenedAt = typeof value.happenedAt === 'string' ? value.happenedAt : '';
 
-  if (!categoryId || amount <= 0 || !happenedAt) {
+  if (
+    !categoryId ||
+    amount <= 0 ||
+    !happenedAt ||
+    Number.isNaN(new Date(happenedAt).getTime())
+  ) {
     return null;
   }
 
@@ -1557,7 +1577,7 @@ const normalizeMonthRecord = (
   value: unknown,
   fallbackCurrencyCode: CurrencyCode = defaultCurrencyCode,
 ): MonthRecord | null => {
-  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.monthlyLimit !== 'string') {
+  if (!isRecord(value) || !isValidMonthId(value.id) || typeof value.monthlyLimit !== 'string') {
     return null;
   }
 
@@ -1567,16 +1587,22 @@ const normalizeMonthRecord = (
         .filter((item): item is Category => item !== null)
     : [];
 
+  const categoryIds = new Set(categories.map((category) => category.id));
   const transactions = Array.isArray(value.transactions)
     ? value.transactions
         .map((item) => normalizeTransaction(item))
-        .filter((item): item is Transaction => item !== null)
+        .filter(
+          (item): item is Transaction => item !== null && categoryIds.has(item.categoryId),
+        )
     : [];
+
+  const monthlyLimit = Number(value.monthlyLimit);
 
   return {
     id: value.id,
     currencyCode: normalizeCurrencyCode(value.currencyCode, fallbackCurrencyCode),
-    monthlyLimit: value.monthlyLimit,
+    monthlyLimit:
+      Number.isFinite(monthlyLimit) && monthlyLimit >= 0 ? value.monthlyLimit.trim() || '0' : '0',
     categories,
     transactions,
     updatedAt: toFiniteNumber(value.updatedAt, Date.now()),
@@ -1713,12 +1739,28 @@ export const ensureCurrentMonth = (
     };
   }
 
-  let latestMonth = months[months.length - 1];
+  if (!months.some((month) => month.id === currentMonthId)) {
+    let previousMonth = months
+      .filter((month) => compareMonthIds(month.id, currentMonthId) < 0)
+      .at(-1);
 
-  while (compareMonthIds(latestMonth.id, currentMonthId) < 0) {
-    const nextMonth = rollMonthForward(latestMonth, addMonths(latestMonth.id, 1));
-    months.push(nextMonth);
-    latestMonth = nextMonth;
+    if (!previousMonth) {
+      months.push(createEmptyMonth(currentMonthId, '0', inputState.preferences.currencyCode));
+    } else {
+      let cursor: MonthRecord = previousMonth;
+
+      while (compareMonthIds(cursor.id, currentMonthId) < 0) {
+        const nextMonthId = addMonths(cursor.id, 1);
+        const existingMonth = months.find((month) => month.id === nextMonthId);
+        const nextMonth: MonthRecord = existingMonth ?? rollMonthForward(cursor, nextMonthId);
+
+        if (!existingMonth) {
+          months.push(nextMonth);
+        }
+
+        cursor = nextMonth;
+      }
+    }
   }
 
   return {

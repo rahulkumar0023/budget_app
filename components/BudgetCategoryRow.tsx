@@ -1,5 +1,5 @@
 import { memo, useRef } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 type Palette = {
   surface: string;
@@ -62,7 +62,7 @@ export const BudgetCategoryRow = memo(function BudgetCategoryRow({
   const handlePressIn = () => {
     Animated.spring(scale, {
       toValue: 0.78,
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
       speed: 40,
       bounciness: 4,
     }).start();
@@ -71,7 +71,7 @@ export const BudgetCategoryRow = memo(function BudgetCategoryRow({
   const handlePressOut = () => {
     Animated.spring(scale, {
       toValue: 1,
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
       speed: 20,
       bounciness: 14,
     }).start();
@@ -79,6 +79,10 @@ export const BudgetCategoryRow = memo(function BudgetCategoryRow({
 
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${name}, ${spentText}, ${leftText} ${leftLabel}`}
+      accessibilityHint={expanded ? 'Collapses category details' : 'Shows category details'}
+      accessibilityState={{ expanded }}
       style={[
         styles.row,
         {
@@ -108,6 +112,9 @@ export const BudgetCategoryRow = memo(function BudgetCategoryRow({
         <View style={styles.headerSide}>
           <Animated.View style={{ transform: [{ scale }] }}>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Add expense to ${name}`}
+              accessibilityHint="Opens the expense form with this category selected"
               style={[styles.quickAddButton, { backgroundColor: palette.accentSoft }]}
               onPressIn={handlePressIn}
               onPressOut={handlePressOut}
@@ -243,8 +250,8 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   quickAddButton: {
-    width: 28,
-    height: 28,
+    width: 44,
+    height: 44,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',

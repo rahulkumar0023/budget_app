@@ -19,23 +19,52 @@ Recovery backup is optional and off by default.
 
 If you turn it on with a signed-in Premium account, Budget Buddy stores your budget state securely so it can be recovered after reinstalling the app or moving devices.
 
-## Smart features
+## Smart features (Premium)
 
-Premium smart features run through secure server-side processing.
+Premium features include monthly check-ins that help separate recurring costs from adjustable spending.
 
-Depending on the feature, Budget Buddy may send:
+This feature may send monthly budget summaries and category totals to our servers for analysis. All data is processed securely and is never shared with third parties.
 
-- monthly aggregates and category summaries for monthly check-ins
-- expense note text, amount, category choices, and account choices for smart expense suggestions
-- category/account structure and month summaries for smart tidy-up
-- prior category history and planned amounts for starter-plan suggestions
+Budget Buddy does not use these features to calculate your budgets, totals, or charts—those are always computed locally on your device.
 
-Budget Buddy does not use smart features to calculate your deterministic totals, charts, or budgeting math.
+## Third-party services
 
-## What is not sold
+**Firebase (Optional Backup)**
+- If you enable backup, your encrypted budget state is stored on Firebase (Google)
+- Data is only accessible with your account credentials
+- You can disable backup anytime in Settings
 
-Budget Buddy does not sell your personal budget data.
+**RevenueCat (Subscriptions)**
+- Handles Premium subscription management
+- Does not store your budget data
+- Privacy policy: https://www.revenuecat.com/privacy
 
-## Contact
+## Data deletion
 
-Before publishing, replace this section with your real support contact and host this document at the privacy-policy URL you submit to App Store Connect.
+You can delete all your data at any time:
+1. Open the app and go to Settings
+2. Tap "Delete Account" (if data export is needed, export first)
+3. All local data is immediately removed
+4. Cloud backup is also removed if you had it enabled
+
+## What is NOT sold or shared
+
+Budget Buddy does **not**:
+- Sell your budget data
+- Share your data with advertisers
+- Use your data for marketing
+- Require data sharing to use the app
+
+## Contact & Privacy Questions
+
+**Email:** namrah.be@gmail.com
+
+For privacy concerns or to request data access/deletion, please email us with:
+- Your app account email (if signed in)
+- Description of your request
+
+We'll respond within 48 hours.
+
+## Policy updates
+
+This privacy policy may be updated to reflect new features or changes. Any material changes will be communicated through the app, and continued use means acceptance.

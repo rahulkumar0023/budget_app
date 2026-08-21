@@ -29,7 +29,13 @@
       "buildNumber": "1",
       "infoPlist": {
         "LSApplicationCategoryType": "public.app-category.finance",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocalNetworkUsageDescription": "Budget Buddy does not require local network access",
+        "NSBonjourServiceTypes": []
+      },
+      "entitlements": {
+        "aps-environment": "production",
+        "com.apple.developer.in-app-payments": true
       }
     },
     "android": {

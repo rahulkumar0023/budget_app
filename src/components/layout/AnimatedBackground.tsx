@@ -1,17 +1,30 @@
 import React, { useEffect, useRef } from 'react';
-import { StyleSheet, View, Animated, Easing, useWindowDimensions } from 'react-native';
-import { useTheme } from '../../hooks/useTheme';
+import { StyleSheet, View, Animated, Easing, Platform, useWindowDimensions } from 'react-native';
+import type { AppTheme } from '../../../budgetModel';
 
-export const AnimatedBackground: React.FC = () => {
-  const { theme } = useTheme();
+type Props = {
+  theme: AppTheme;
+};
+
+const isLightColor = (color: string) => {
+  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
+
+  if (!match) {
+    return true;
+  }
+
+  const [, red, green, blue] = match;
+  const luminance =
+    0.2126 * Number.parseInt(red, 16) +
+    0.7152 * Number.parseInt(green, 16) +
+    0.0722 * Number.parseInt(blue, 16);
+
+  return luminance >= 140;
+};
+
+export const AnimatedBackground: React.FC<Props> = ({ theme }) => {
   const { height } = useWindowDimensions();
-
-  // Detect if theme is light based on background color - check for light backgrounds
-  const isLightTheme = !theme.background.startsWith('#0') &&
-                      !theme.background.startsWith('#1') &&
-                      !theme.background.startsWith('#2') &&
-                      theme.background !== '#FFFFFF';
-  const orbOpacity = isLightTheme ? 0.12 : 0.55;
+  const orbOpacity = isLightColor(theme.background) ? 0.12 : 0.55;
 
   const move1 = useRef(new Animated.Value(0)).current;
   const move2 = useRef(new Animated.Value(0)).current;
@@ -30,13 +43,13 @@ export const AnimatedBackground: React.FC = () => {
           toValue: 1,
           duration,
           easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(value, {
           toValue: 0,
           duration,
           easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ])
     );
@@ -48,19 +61,19 @@ export const AnimatedBackground: React.FC = () => {
           toValue: 1.2,
           duration,
           easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(value, {
           toValue: 0.85,
           duration,
           easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ])
     );
 
   useEffect(() => {
-    Animated.parallel([
+    const animation = Animated.parallel([
       createMoveAnimation(move1, 10000),
       createMoveAnimation(move2, 12000),
       createMoveAnimation(move3, 15000),
@@ -69,7 +82,10 @@ export const AnimatedBackground: React.FC = () => {
       createScaleAnimation(scale2, 11000),
       createScaleAnimation(scale3, 13500),
       createScaleAnimation(scale4, 16000),
-    ]).start();
+    ]);
+
+    animation.start();
+    return () => animation.stop();
   }, []);
 
   const getOrbStyle = (

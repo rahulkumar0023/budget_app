@@ -76,6 +76,7 @@ export const TransactionListItem = memo(function TransactionListItem({
 
   return (
     <ScrollView
+      accessibilityLabel={`${title}, ${amountText}, ${categoryLabel}, ${dateText}`}
       horizontal
       bounces={false}
       showsHorizontalScrollIndicator={false}
@@ -142,6 +143,9 @@ export const TransactionListItem = memo(function TransactionListItem({
       <View style={[styles.swipeRail, { width: swipeRailWidth }]}>
         {onQuickLog ? (
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Log ${title} again`}
+            accessibilityHint="Opens a new expense prefilled from this transaction"
             style={[
               styles.swipeRailButton,
               {
@@ -155,6 +159,8 @@ export const TransactionListItem = memo(function TransactionListItem({
           </Pressable>
         ) : null}
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${title}`}
           style={[
             styles.swipeRailButton,
             {
@@ -167,6 +173,8 @@ export const TransactionListItem = memo(function TransactionListItem({
           <Text style={[styles.swipeRailButtonTextPrimary, { color: palette.accentText }]}>Edit</Text>
         </Pressable>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${title}`}
           style={[styles.swipeRailButton, { backgroundColor: palette.alertSurface, borderColor: palette.alertSurface }]}
           onPress={onDelete}
         >

@@ -1024,14 +1024,14 @@ const AnimatedPressable: React.FC<AnimatedPressableProps> = ({
   const pressIn = () => {
     Animated.spring(scaleAnim, {
       toValue: scale,
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     }).start();
   };
 
   const pressOut = () => {
     Animated.spring(scaleAnim, {
       toValue: 1,
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     }).start();
   };
 
@@ -1459,6 +1459,10 @@ export default function App() {
     () => new Map(bankAccounts.map((account) => [account.id, account])),
     [bankAccounts],
   );
+  const categoryMap = useMemo(
+    () => new Map(activeMonth.categories.map((category) => [category.id, category])),
+    [activeMonth.categories],
+  );
   const accountUsageCounts = useMemo(() => {
     const counts = new Map<string, number>();
 
@@ -1541,7 +1545,7 @@ export default function App() {
   const editingCategoryPlanned =
     activeMonth.categories.find((category) => category.id === editingCategoryId)?.planned ?? 0;
   const categoryDraftPlanned = Number(categoryPlanned);
-  const categoryDraftIsValid = !Number.isNaN(categoryDraftPlanned) && categoryDraftPlanned > 0;
+  const categoryDraftIsValid = Number.isFinite(categoryDraftPlanned) && categoryDraftPlanned > 0;
   const projectedAssignedTotal =
     totalPlanned - editingCategoryPlanned + (categoryDraftIsValid ? categoryDraftPlanned : 0);
   const projectedAllocationDelta =
@@ -2422,9 +2426,9 @@ export default function App() {
   const recentExpenseCategories = useMemo(
     () =>
       recentExpenseCategoryIds
-        .map((categoryId) => activeMonth.categories.find((category) => category.id === categoryId) ?? null)
+        .map((categoryId) => categoryMap.get(categoryId) ?? null)
         .filter((category): category is Category => Boolean(category)),
-    [activeMonth.categories, recentExpenseCategoryIds],
+    [categoryMap, recentExpenseCategoryIds],
   );
 
   const filteredTransactions = useMemo(() => {
@@ -2436,9 +2440,7 @@ export default function App() {
 
     return sortTransactions(
       activeMonth.transactions.filter((transaction) => {
-        const category = activeMonth.categories.find(
-          (item) => item.id === transaction.categoryId,
-        );
+        const category = categoryMap.get(transaction.categoryId);
         const categoryName = category?.name.toLowerCase() ?? '';
         const subcategoryName = transaction.subcategory?.toLowerCase() ?? '';
         const note = transaction.note.toLowerCase();
@@ -2471,6 +2473,7 @@ export default function App() {
     activeMonthIsCurrent,
     activityScope,
     categoryToneById,
+    categoryMap,
     searchQuery,
     transactionFilter,
     transactionSort,
@@ -2934,7 +2937,7 @@ export default function App() {
   };
 
   const applyExpenseTemplate = (transaction: Transaction) => {
-    const category = activeMonth.categories.find((item) => item.id === transaction.categoryId);
+    const category = categoryMap.get(transaction.categoryId);
     setExpenseAmount(String(Number(transaction.amount.toFixed(2))));
     setExpenseNote(transaction.note);
     setExpenseCategoryId(transaction.categoryId);
@@ -2947,6 +2950,13 @@ export default function App() {
     );
     setExpenseAiSuggestion(null);
     setExpenseAiError('');
+  };
+
+  const repeatTransaction = (transaction: Transaction) => {
+    resetTransactionForm();
+    applyExpenseTemplate(transaction);
+    setIsExpenseSheetOpen(true);
+    navigateToScreen('spend');
   };
 
   const openCategoryDetail = (categoryId: string) => {
@@ -4068,7 +4078,7 @@ export default function App() {
 
     const amount = Number(expenseAmount);
 
-    if (!expenseCategoryId || Number.isNaN(amount) || amount <= 0) {
+    if (!expenseCategoryId || !Number.isFinite(amount) || amount <= 0) {
       return;
     }
 
@@ -4161,7 +4171,7 @@ export default function App() {
     const trimmedName = categoryName.trim();
     const nextSubcategories = parseSubcategoryInput(categorySubcategoriesText);
 
-    if (!trimmedName || Number.isNaN(planned) || planned <= 0) {
+    if (!trimmedName || !Number.isFinite(planned) || planned <= 0) {
       return;
     }
 
@@ -4339,7 +4349,13 @@ export default function App() {
     const saved = Number(goalSaved || '0');
     const trimmedName = goalName.trim();
 
-    if (!trimmedName || Number.isNaN(target) || target <= 0 || Number.isNaN(saved) || saved < 0) {
+    if (
+      !trimmedName ||
+      !Number.isFinite(target) ||
+      target <= 0 ||
+      !Number.isFinite(saved) ||
+      saved < 0
+    ) {
       return;
     }
 
@@ -4752,8 +4768,7 @@ export default function App() {
           {showRecentExpenseTemplates ? (
             <View style={styles.expenseInlineRow}>
               {recentExpenseTemplates.slice(0, 3).map((transaction) => {
-                const category =
-                  activeMonth.categories.find((item) => item.id === transaction.categoryId) ?? null;
+                const category = categoryMap.get(transaction.categoryId) ?? null;
                 const label = getTransactionDisplayTitle(transaction, category?.name);
 
                 return (
@@ -6082,7 +6097,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <AnimatedBackground />
+      <AnimatedBackground theme={currentTheme} />
 
       <ScrollView
         style={styles.scroll}
@@ -6688,9 +6703,7 @@ export default function App() {
                   showsVerticalScrollIndicator={false}
                   ItemSeparatorComponent={() => <View style={styles.listSpacer} />}
                   renderItem={({ item: transaction }) => {
-                    const category = activeMonth.categories.find(
-                      (item) => item.id === transaction.categoryId,
-                    );
+                    const category = categoryMap.get(transaction.categoryId);
                     const account = transaction.accountId ? accountMap.get(transaction.accountId) : null;
                     const theme = category ? categoryThemes[category.themeId] : categoryThemes.citrus;
                     const tone = categoryToneById.get(transaction.categoryId)?.tone ?? 'good';
@@ -6733,6 +6746,7 @@ export default function App() {
                         }}
                         onEdit={() => editTransaction(transaction)}
                         onDelete={() => deleteTransaction(transaction.id)}
+                        onQuickLog={() => repeatTransaction(transaction)}
                       />
                     );
                   }}

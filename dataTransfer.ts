@@ -1,4 +1,3 @@
-import { PDFDocument } from 'pdf-lib';
 import * as XLSX from 'xlsx';
 import {
   appThemes,
@@ -1269,6 +1268,7 @@ export const buildImportableBudgetPdfBase64 = async (
   appState: BudgetAppState,
   month: MonthRecord,
 ) => {
+  const { PDFDocument } = await import('pdf-lib');
   const pdfDoc = await PDFDocument.load(pdfBase64);
   pdfDoc.setTitle(
     `Budget report for ${getMonthLabel(month.id, getLocaleTag(appState.preferences.languageCode))}`,
@@ -1284,6 +1284,7 @@ export const buildImportableBudgetPdfBase64 = async (
 
 export const importBudgetPdfBase64 = async (pdfBase64: string, referenceDate = new Date()) => {
   try {
+    const { PDFDocument } = await import('pdf-lib');
     const pdfDoc = await PDFDocument.load(pdfBase64, { updateMetadata: false });
     const subject = pdfDoc.getSubject()?.trim() ?? '';
 

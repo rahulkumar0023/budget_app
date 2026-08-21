@@ -5600,7 +5600,8 @@ export default function App() {
 
   const renderSimplePlanScreen = () => !hasActiveBudget || isBudgetSetupActive ? renderEmptyPlanBuilder() : (
     <View style={styles.simplePlanPage}>
-      <View style={styles.planAmountPanel}>
+      <Card variant="filled" padding={spacing.lg}>
+        <View style={styles.planAmountPanel}>
         <View style={styles.planAmountHeader}>
           <View>
             <Text style={styles.settingsGroupLabel}>MONTHLY BUDGET</Text>
@@ -5653,7 +5654,8 @@ export default function App() {
             <Text style={styles.planDeleteBudgetText}>Delete {activeMonthName} budget</Text>
           </Pressable>
         ) : null}
-      </View>
+        </View>
+      </Card>
 
       <View style={styles.planListHeader}>
         <View>
@@ -5693,7 +5695,8 @@ export default function App() {
           visiblePlanCategorySummaries.map((summary, index) => {
             const theme = categoryThemes[summary.category.themeId];
             return (
-              <View key={summary.category.id} style={styles.planCategoryRow}>
+              <Card key={summary.category.id} variant="surface" padding={spacing.lg}>
+              <View style={styles.planCategoryRow}>
                 <View style={styles.planCategoryMainRow}>
                   <View style={[styles.planCategoryIcon, { backgroundColor: theme.bubble }]}>
                     <Text style={[styles.planCategoryIconText, { color: theme.bubbleText }]}>
@@ -5765,6 +5768,7 @@ export default function App() {
                   )}
                 </View>
               </View>
+              </Card>
             );
           })
         )}
@@ -6189,8 +6193,10 @@ export default function App() {
       )}
 
       {activeSettingsSection === 'appearance' ? (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Theme</Text>
+        <View style={{ marginBottom: spacing.xxxl }}>
+          <Text style={[styles.sectionTitle, { fontSize: 12, textTransform: 'uppercase', marginBottom: spacing.lg }]}>Appearance</Text>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Theme</Text>
           <Text style={styles.sectionSubtitle}>Calm looks for the app.</Text>
 
           <Pressable
@@ -6219,13 +6225,16 @@ export default function App() {
             <Button variant="tertiary" size="medium" onPress={openThemePicker}>
               Browse themes
             </Button>
+            </View>
           </View>
         </View>
       ) : null}
 
       {activeSettingsSection === 'locale' ? (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Currency and language</Text>
+        <View style={{ marginBottom: spacing.xxxl }}>
+          <Text style={[styles.sectionTitle, { fontSize: 12, textTransform: 'uppercase', marginBottom: spacing.lg }]}>Preferences</Text>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Currency and language</Text>
           <Text style={styles.sectionSubtitle}>Defaults for budgets and dates.</Text>
 
           <Pressable
@@ -6263,15 +6272,18 @@ export default function App() {
             <Text style={styles.localePreviewText}>Date: {localeDatePreview}</Text>
             <Text style={styles.localePreviewText}>Month label: {localeMonthPreview}</Text>
             <Text style={styles.localePreviewText}>Budget amount: {localeCurrencyPreview}</Text>
+            </View>
           </View>
         </View>
       ) : null}
 
       {activeSettingsSection === 'accounts' ? (
-        <View style={styles.card}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionHeaderCopy}>
-              <Text style={styles.sectionTitle}>Bank accounts</Text>
+        <View style={{ marginBottom: spacing.xxxl }}>
+          <Text style={[styles.sectionTitle, { fontSize: 12, textTransform: 'uppercase', marginBottom: spacing.lg }]}>Accounts & Data</Text>
+          <View style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionHeaderCopy}>
+                <Text style={styles.sectionTitle}>Bank accounts</Text>
               <Text style={styles.sectionSubtitle}>Optional tags for where money moved from.</Text>
             </View>
 
@@ -6717,13 +6729,16 @@ export default function App() {
                 </View>
               ) : null}
             </>
-          )}
+            )}
+          </View>
         </View>
       ) : null}
 
       {activeSettingsSection === 'data' ? (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Data tools</Text>
+        <View style={{ marginBottom: spacing.xxxl }}>
+          <Text style={[styles.sectionTitle, { fontSize: 12, textTransform: 'uppercase', marginBottom: spacing.lg }]}>Data Management</Text>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Data tools</Text>
           <Text style={styles.sectionSubtitle}>Import, export, and clean up what came in.</Text>
 
           <View style={styles.transferGrid}>
@@ -6881,6 +6896,7 @@ export default function App() {
           {hasPremiumAccess && importCleanupError ? (
             <Text style={styles.aiReviewErrorText}>{importCleanupError}</Text>
           ) : null}
+          </View>
         </View>
       ) : null}
     </>
@@ -7490,14 +7506,61 @@ export default function App() {
                       : 'Try a different filter or add a new expense above.'}
                   </Text>
                 </View>
-              ) : (
+              ) : (() => {
+                // Group transactions by date
+                const groupedByDate: Record<string, Transaction[]> = {};
+                visibleTransactions.forEach(transaction => {
+                  const date = new Date(transaction.date);
+                  const today = new Date();
+                  const yesterday = new Date(today);
+                  yesterday.setDate(yesterday.getDate() - 1);
+
+                  let dateLabel = '';
+                  if (date.toDateString() === today.toDateString()) {
+                    dateLabel = 'TODAY';
+                  } else if (date.toDateString() === yesterday.toDateString()) {
+                    dateLabel = 'YESTERDAY';
+                  } else {
+                    dateLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+                  }
+
+                  if (!groupedByDate[dateLabel]) {
+                    groupedByDate[dateLabel] = [];
+                  }
+                  groupedByDate[dateLabel].push(transaction);
+                });
+
+                // Create flat list data with headers
+                const listData: Array<{type: 'header', label: string} | {type: 'transaction', data: Transaction}> = [];
+                Object.entries(groupedByDate).forEach(([label, transactions]) => {
+                  listData.push({ type: 'header', label });
+                  transactions.forEach(t => listData.push({ type: 'transaction', data: t }));
+                });
+
+                return (
                 <FlatList
-                  data={visibleTransactions}
-                  keyExtractor={(transaction) => transaction.id}
+                  data={listData}
+                  keyExtractor={(item) => item.type === 'header' ? item.label : item.data.id}
                   scrollEnabled={false}
                   showsVerticalScrollIndicator={false}
-                  ItemSeparatorComponent={() => <View style={styles.listSpacer} />}
-                  renderItem={({ item: transaction }) => {
+                  renderItem={({ item }) => {
+                    if (item.type === 'header') {
+                      return (
+                        <Text style={{
+                          fontSize: 12,
+                          fontWeight: '700',
+                          color: currentTheme.secondary,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.5,
+                          marginBottom: spacing.md,
+                          marginTop: spacing.lg,
+                        }}>
+                          {item.label}
+                        </Text>
+                      );
+                    }
+
+                    const transaction = item.data;
                     const isIncome = transaction.kind === 'income';
                     const category = categoryMap.get(transaction.categoryId);
                     const account = transaction.accountId ? accountMap.get(transaction.accountId) : null;
@@ -7547,7 +7610,8 @@ export default function App() {
                     );
                   }}
                 />
-              )}
+                );
+              })()}
 
               {hiddenTransactionCount > 0 ? (
                 <View style={styles.sectionActionRow}>

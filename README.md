@@ -42,7 +42,7 @@ Users follow this monthly cycle:
 5. Adjust if overspending
 6. Roll over to next month
 
-See [**full documentation**](./docs/DIAGRAMS.md) for more details.
+See the [UI and brand redesign record](./docs/UI_REDESIGN.md) and [architecture diagrams](./docs/DIAGRAMS.md) for more details.
 
 ## Getting started
 

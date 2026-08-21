@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Budget Buddy notification icon">
-  <text x="48" y="62" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="900" fill="#FFFFFF">BB</text>
-  <rect x="25" y="69" width="46" height="5" rx="2.5" fill="#FFFFFF"/>
+<svg width="192" height="192" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+  <!-- Simple notification icon - dollar sign in circle -->
+  <circle cx="96" cy="96" r="92" fill="white"/>
+
+  <!-- Dollar sign -->
+  <text x="96" y="125" font-size="100" font-weight="bold" fill="#10b981" text-anchor="middle">$</text>
 </svg>

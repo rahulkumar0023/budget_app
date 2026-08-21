@@ -8,7 +8,7 @@
     "scheme": "budgetbuddy",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/icon-v3.png",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
@@ -41,7 +41,7 @@
     "android": {
       "package": "com.rahulkumar.budgetbuddy",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-foreground.png",
+        "foregroundImage": "./assets/adaptive-foreground-v3.png",
         "backgroundColor": "#F6F1EA"
       }
     },
@@ -63,7 +63,8 @@
     },
     "plugins": [
       "@react-native-community/datetimepicker",
-      "expo-document-picker"
+      "expo-document-picker",
+      "expo-sharing"
     ]
   }
 }

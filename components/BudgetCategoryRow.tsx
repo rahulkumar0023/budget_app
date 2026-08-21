@@ -201,11 +201,11 @@ export const BudgetCategoryRow = memo(function BudgetCategoryRow({
 
 const styles = StyleSheet.create({
   row: {
-    borderRadius: 20,
+    borderRadius: 16,
     borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    gap: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 9,
   },
   header: {
     flexDirection: 'row',
@@ -221,9 +221,9 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   iconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -250,8 +250,8 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   quickAddButton: {
-    width: 44,
-    height: 44,
+    width: 36,
+    height: 36,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
@@ -267,7 +267,7 @@ const styles = StyleSheet.create({
     maxWidth: 96,
   },
   amount: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
     textAlign: 'right',
   },
@@ -319,7 +319,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   track: {
-    height: 6,
+    height: 5,
     borderRadius: 999,
     overflow: 'hidden',
   },

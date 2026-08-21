@@ -8414,9 +8414,9 @@ export default function App() {
                     : 'Review this category and log the next expense from here.'}
                 </Text>
               </View>
-              <Pressable style={styles.secondaryButton} onPress={closeCategoryDetail}>
-                <Text style={styles.secondaryButtonText}>Close</Text>
-              </Pressable>
+              <Button variant="secondary" size="medium" onPress={closeCategoryDetail}>
+                Close
+              </Button>
             </View>
 
             {selectedCategorySummary && selectedCategoryDetail ? (
@@ -8569,9 +8569,9 @@ export default function App() {
                   Keep the app look calm without filling the Settings screen with preview cards.
                 </Text>
               </View>
-              <Pressable style={styles.secondaryButton} onPress={closeThemePicker}>
-                <Text style={styles.secondaryButtonText}>Close</Text>
-              </Pressable>
+              <Button variant="secondary" size="medium" onPress={closeThemePicker}>
+                Close
+              </Button>
             </View>
             <ScrollView
               style={styles.sheetScroll}
@@ -8634,9 +8634,9 @@ export default function App() {
                     : 'Set the locale used for dates and number formatting.'}
                 </Text>
               </View>
-              <Pressable style={styles.secondaryButton} onPress={closeLocalePicker}>
-                <Text style={styles.secondaryButtonText}>Close</Text>
-              </Pressable>
+              <Button variant="secondary" size="medium" onPress={closeLocalePicker}>
+                Close
+              </Button>
             </View>
             <ScrollView
               style={styles.sheetScroll}
@@ -8894,9 +8894,9 @@ export default function App() {
                   Tag one account with multiple roles if you use it for spending, pockets, and savings at the same time.
                 </Text>
               </View>
-              <Pressable style={styles.secondaryButton} onPress={closeAccountSheet}>
-                <Text style={styles.secondaryButtonText}>Close</Text>
-              </Pressable>
+              <Button variant="secondary" size="medium" onPress={closeAccountSheet}>
+                Close
+              </Button>
             </View>
             <ScrollView
               style={styles.sheetScroll}

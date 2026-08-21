@@ -6382,6 +6382,7 @@ export default function App() {
             </>
           )}
         </View>
+        </View>
       ) : null}
 
       {activeSettingsSection === 'cloud' ? (
@@ -6731,7 +6732,6 @@ export default function App() {
             </>
             )}
           </View>
-        </View>
       ) : null}
 
       {activeSettingsSection === 'data' ? (
@@ -7510,7 +7510,7 @@ export default function App() {
                 // Group transactions by date
                 const groupedByDate: Record<string, Transaction[]> = {};
                 visibleTransactions.forEach(transaction => {
-                  const date = new Date(transaction.date);
+                  const date = new Date(transaction.happenedAt);
                   const today = new Date();
                   const yesterday = new Date(today);
                   yesterday.setDate(yesterday.getDate() - 1);
@@ -7549,7 +7549,7 @@ export default function App() {
                         <Text style={{
                           fontSize: 12,
                           fontWeight: '700',
-                          color: currentTheme.secondary,
+                          color: currentTheme.textMuted,
                           textTransform: 'uppercase',
                           letterSpacing: 0.5,
                           marginBottom: spacing.md,

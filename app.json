@@ -64,7 +64,8 @@
     "plugins": [
       "@react-native-community/datetimepicker",
       "expo-document-picker",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-font"
     ]
   }
 }

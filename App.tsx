@@ -7112,18 +7112,11 @@ export default function App() {
   ) : (
     <>
       <View style={styles.transactionHeroCard}>
-        <View style={styles.transactionHeroHeader}>
-          <View>
-            <Text style={styles.settingsGroupLabel}>{activityScopeLabel.toUpperCase()}</Text>
-            <Text style={styles.transactionHeroTitle}>
-              {filteredTransactions.length > 0 ? formatCurrency(filteredTransactionTotal) : 'Ready to log'}
-            </Text>
-          </View>
-          {activeMonth.categories.length > 0 && (
-            <Button variant="primary" size="large" onPress={() => openExpenseCapture(undefined, null)}>
-              Add expense
-            </Button>
-          )}
+        <View>
+          <Text style={styles.settingsGroupLabel}>{activityScopeLabel.toUpperCase()}</Text>
+          <Text style={styles.transactionHeroTitle}>
+            {filteredTransactions.length > 0 ? formatCurrency(filteredTransactionTotal) : 'Ready to log'}
+          </Text>
         </View>
         <Text style={styles.activityHeroMeta}>{activityHeroMeta}</Text>
       </View>
@@ -13654,12 +13647,6 @@ const createStyles = (
       padding: 16,
       gap: 12,
       marginBottom: spacing.lg,
-    },
-    transactionHeroHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start',
-      gap: spacing.lg,
     },
     transactionHeroTitle: {
       color: theme.text,

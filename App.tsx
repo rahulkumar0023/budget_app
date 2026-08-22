@@ -16,6 +16,7 @@ import {
   Animated,
   type DimensionValue,
   FlatList,
+  KeyboardAvoidingView,
   LayoutAnimation,
   Modal,
   Platform,
@@ -1107,7 +1108,8 @@ export default function App() {
   const [expenseRecurring, setExpenseRecurring] = useState(false);
   const [expenseContextCategoryId, setExpenseContextCategoryId] = useState<string | null>(null);
   const [showExpenseDatePicker, setShowExpenseDatePicker] = useState(false);
-  const [showExpenseDetails, setShowExpenseDetails] = useState(false);
+  const [showExpenseSubcategoryPicker, setShowExpenseSubcategoryPicker] = useState(false);
+  const [showExpenseAccountPicker, setShowExpenseAccountPicker] = useState(false);
   const [isExpenseSheetOpen, setIsExpenseSheetOpen] = useState(false);
   const [isQuickAddMenuOpen, setIsQuickAddMenuOpen] = useState(false);
   const [isIncomeSheetOpen, setIsIncomeSheetOpen] = useState(false);
@@ -1119,6 +1121,7 @@ export default function App() {
   const [selectedCategoryDetailId, setSelectedCategoryDetailId] = useState<string | null>(null);
   const [showCategoryDetailSubcategoryInput, setShowCategoryDetailSubcategoryInput] = useState(false);
   const [categoryDetailSubcategoryName, setCategoryDetailSubcategoryName] = useState('');
+  const [categoryDetailSubcategoryBudget, setCategoryDetailSubcategoryBudget] = useState('');
 
   const [accountName, setAccountName] = useState('');
   const [accountKinds, setAccountKinds] = useState<BankAccountKind[]>(['spending']);
@@ -2265,6 +2268,9 @@ export default function App() {
     expenseAiSuggestion?.accountId ? accountMap.get(expenseAiSuggestion.accountId) ?? null : null;
   const selectedExpenseCategory =
     activeMonth.categories.find((category) => category.id === expenseCategoryId) ?? null;
+  const selectedExpenseCategorySummary = selectedExpenseCategory
+    ? categorySummaries.find((summary) => summary.category.id === selectedExpenseCategory.id) ?? null
+    : null;
   const selectedExpenseSubcategories = selectedExpenseCategory?.subcategories ?? [];
 
   const categoryToneById = useMemo(
@@ -2845,11 +2851,12 @@ export default function App() {
     setExpenseDate(getDefaultExpenseDate(activeMonth?.id ?? getMonthId(new Date())));
     setExpenseRecurring(false);
     setExpenseContextCategoryId(null);
-    setShowExpenseDetails(false);
     setExpenseAiSuggestion(null);
     setExpenseAiError('');
     setExpenseAiBusy(false);
     setShowExpenseDatePicker(false);
+    setShowExpenseSubcategoryPicker(false);
+    setShowExpenseAccountPicker(false);
     setIsExpenseSheetOpen(false);
     setEditingTransactionId(null);
   };
@@ -2927,7 +2934,6 @@ export default function App() {
       setExpenseCategoryId(categoryId);
       setExpenseRecurring(category?.recurring ?? false);
       setExpenseSubcategory(resolveExpenseSubcategory(category, subcategory, { preferSingle: true }));
-      setShowExpenseDetails(false);
     } else {
       const preferredCategoryId =
         recentExpenseCategoryIds[0] ??
@@ -2951,6 +2957,8 @@ export default function App() {
     const category = activeMonth.categories.find((item) => item.id === categoryId);
 
     setExpenseCategoryId(categoryId);
+    setShowExpenseSubcategoryPicker(false);
+    setShowExpenseAccountPicker(false);
     if (category) {
       setExpenseRecurring(category.recurring);
       setExpenseSubcategory((current) => resolveExpenseSubcategory(category, current));
@@ -2968,9 +2976,6 @@ export default function App() {
     setExpenseAccountId(transaction.accountId ?? bankAccounts[0]?.id ?? '');
     setExpenseRecurring(transaction.recurring);
     setExpenseDate(getDefaultExpenseDate(activeMonth.id));
-    setShowExpenseDetails(
-      Boolean(transaction.subcategory || transaction.accountId || transaction.recurring),
-    );
     setExpenseAiSuggestion(null);
     setExpenseAiError('');
   };
@@ -2991,12 +2996,14 @@ export default function App() {
   const openCategoryDetail = (categoryId: string) => {
     setShowCategoryDetailSubcategoryInput(false);
     setCategoryDetailSubcategoryName('');
+    setCategoryDetailSubcategoryBudget('');
     setSelectedCategoryDetailId(categoryId);
   };
 
   const closeCategoryDetail = () => {
     setShowCategoryDetailSubcategoryInput(false);
     setCategoryDetailSubcategoryName('');
+    setCategoryDetailSubcategoryBudget('');
     setSelectedCategoryDetailId(null);
   };
 
@@ -3593,6 +3600,9 @@ export default function App() {
       return;
     }
 
+    setShowExpenseSubcategoryPicker(false);
+    setShowExpenseAccountPicker(false);
+
     if (Platform.OS === 'android') {
       DateTimePickerAndroid.open({
         mode: 'date',
@@ -4184,7 +4194,6 @@ export default function App() {
     setExpenseAccountId(transaction.accountId ?? '');
     setExpenseDate(clampDateToMonth(new Date(transaction.happenedAt), activeMonth.id));
     setExpenseRecurring(transaction.recurring);
-    setShowExpenseDetails(true);
     setShowExpenseDatePicker(false);
     setIsExpenseSheetOpen(true);
     navigateToScreen('spend');
@@ -4240,6 +4249,23 @@ export default function App() {
       return;
     }
 
+    const categoryBeingEdited = editingCategoryId
+      ? activeMonth.categories.find((category) => category.id === editingCategoryId) ?? null
+      : null;
+    const retainedSubcategoryBudgetTotal = nextSubcategories.reduce(
+      (sum, subcategory) => sum + (categoryBeingEdited?.subcategoryBudgets?.[subcategory] ?? 0),
+      0,
+    );
+
+    if (retainedSubcategoryBudgetTotal > planned) {
+      showToast({
+        message: `This category needs at least ${formatCurrency(retainedSubcategoryBudgetTotal)} for its subcategory budgets.`,
+        tone: 'error',
+      });
+      void triggerHaptic('warning');
+      return;
+    }
+
     if (activeMonth.categories.length === 0 && !editingCategoryId) {
       setIsBudgetSetupActive(true);
     }
@@ -4254,6 +4280,12 @@ export default function App() {
                   name: trimmedName,
                   planned,
                   subcategories: nextSubcategories,
+                  subcategoryBudgets: Object.fromEntries(
+                    nextSubcategories.flatMap((subcategory) => {
+                      const amount = category.subcategoryBudgets?.[subcategory] ?? 0;
+                      return amount > 0 ? [[subcategory, amount]] : [];
+                    }),
+                  ),
                   bucket: categoryBucket,
                   recurring: categoryRecurring,
                   themeId: categoryThemeId,
@@ -4266,6 +4298,7 @@ export default function App() {
               name: trimmedName,
               planned,
               subcategories: nextSubcategories,
+              subcategoryBudgets: {},
               bucket: categoryBucket,
               recurring: categoryRecurring,
               themeId: categoryThemeId,
@@ -4363,6 +4396,12 @@ export default function App() {
           ? {
               ...category,
               subcategories: parseSubcategoryInput(inlineSubcategoryText),
+              subcategoryBudgets: Object.fromEntries(
+                parseSubcategoryInput(inlineSubcategoryText).flatMap((subcategory) => {
+                  const amount = category.subcategoryBudgets?.[subcategory] ?? 0;
+                  return amount > 0 ? [[subcategory, amount]] : [];
+                }),
+              ),
             }
           : category,
       ),
@@ -4377,7 +4416,15 @@ export default function App() {
     }
 
     const nextName = categoryDetailSubcategoryName.trim();
+    const nextBudget = categoryDetailSubcategoryBudget.trim()
+      ? Number(categoryDetailSubcategoryBudget)
+      : 0;
     if (!nextName) {
+      return;
+    }
+
+    if (!Number.isFinite(nextBudget) || nextBudget < 0) {
+      showToast({ message: 'Enter a valid subcategory budget.', tone: 'error' });
       return;
     }
 
@@ -4390,17 +4437,87 @@ export default function App() {
       return;
     }
 
+    const assignedSubcategoryBudget = Object.values(
+      selectedCategoryDetail.subcategoryBudgets ?? {},
+    ).reduce((sum, amount) => sum + amount, 0);
+
+    if (nextBudget > 0 && assignedSubcategoryBudget + nextBudget > selectedCategoryDetail.planned) {
+      showToast({
+        message: `Subcategory budgets cannot exceed ${formatCurrency(selectedCategoryDetail.planned)}.`,
+        tone: 'error',
+      });
+      return;
+    }
+
     updateActiveMonth((month) => ({
       ...month,
       categories: month.categories.map((category) =>
         category.id === selectedCategoryDetail.id
-          ? { ...category, subcategories: [...category.subcategories, nextName] }
+          ? {
+              ...category,
+              subcategories: [...category.subcategories, nextName],
+              subcategoryBudgets:
+                nextBudget > 0
+                  ? { ...(category.subcategoryBudgets ?? {}), [nextName]: nextBudget }
+                  : category.subcategoryBudgets,
+            }
           : category,
       ),
     }));
     setCategoryDetailSubcategoryName('');
+    setCategoryDetailSubcategoryBudget('');
     setShowCategoryDetailSubcategoryInput(false);
     showToast({ message: 'Subcategory added.', tone: 'success' });
+  };
+
+  const deleteSubcategory = (categoryId: string, subcategoryName: string) => {
+    const attachedExpenseCount = activeMonth.transactions.filter(
+      (transaction) =>
+        transaction.categoryId === categoryId && transaction.subcategory === subcategoryName,
+    ).length;
+
+    Alert.alert(
+      'Delete subcategory?',
+      attachedExpenseCount > 0
+        ? `${attachedExpenseCount} ${attachedExpenseCount === 1 ? 'expense' : 'expenses'} will stay in the category without a subcategory.`
+        : 'Its assigned budget will return to the parent category.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            updateActiveMonth((month) => ({
+              ...month,
+              categories: month.categories.map((category) => {
+                if (category.id !== categoryId) {
+                  return category;
+                }
+
+                const nextSubcategoryBudgets = { ...(category.subcategoryBudgets ?? {}) };
+                delete nextSubcategoryBudgets[subcategoryName];
+
+                return {
+                  ...category,
+                  subcategories: category.subcategories.filter(
+                    (subcategory) => subcategory !== subcategoryName,
+                  ),
+                  subcategoryBudgets: nextSubcategoryBudgets,
+                };
+              }),
+              transactions: month.transactions.map((transaction) =>
+                transaction.categoryId === categoryId &&
+                transaction.subcategory === subcategoryName
+                  ? { ...transaction, subcategory: undefined }
+                  : transaction,
+              ),
+            }));
+            showToast({ message: `${subcategoryName} deleted.`, tone: 'success' });
+            void triggerHaptic('success');
+          },
+        },
+      ],
+    );
   };
 
   const duplicateCategoryDraft = (category: Category) => {
@@ -4880,50 +4997,33 @@ export default function App() {
     return (
       <>
         <View style={styles.expenseFormStack}>
-          <View style={styles.expenseAmountCard}>
-            <Text style={styles.expenseAmountLabel}>AMOUNT</Text>
+          <View style={styles.expenseEntryAmountCard}>
             <View style={styles.expenseAmountRow}>
-              <Text style={styles.expenseAmountCurrency}>{activeMonthCurrencyMarker}</Text>
+              <Text style={styles.expenseEntryAmountCurrency}>{activeMonthCurrencyMarker}</Text>
               <TextInput
-                style={styles.expenseAmountInput}
+                style={styles.expenseEntryAmountInput}
                 value={expenseAmount}
                 onChangeText={setExpenseAmount}
                 keyboardType="numeric"
                 autoFocus={!editingTransactionId}
+                returnKeyType="done"
+                onSubmitEditing={() => {
+                  if (expenseCategoryId && Number(expenseAmount) > 0) {
+                    submitTransaction();
+                  }
+                }}
                 placeholder="0"
-                placeholderTextColor={currentTheme.heroMuted}
+                placeholderTextColor={currentTheme.placeholder}
                 selectionColor={currentTheme.accent}
               />
             </View>
           </View>
-
-          <View style={styles.quickAmountRow}>
-            {[10, 20, 50, 100].map((amount) => {
-              const selected = expenseAmount === String(amount);
-
-              return (
-                <Pressable
-                  key={amount}
-                  style={[styles.quickAmountChip, selected && styles.quickAmountChipActive]}
-                  onPress={() => setExpenseAmount(String(amount))}
-                >
-                  <Text style={[styles.quickAmountChipText, selected && styles.quickAmountChipTextActive]}>
-                    {formatCurrency(amount)}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
         </View>
 
         {!expenseContextCategoryId ? (
-          <>
+          <View style={styles.expenseCategorySection}>
             <View style={styles.expenseSectionHeader}>
               <Text style={styles.fieldLabel}>Category</Text>
-              {recentExpenseCategories.length > 0 ? (
-                <Text style={styles.expenseSectionMeta}>Recent first</Text>
-              ) : null}
             </View>
             <View style={styles.chipWrap}>
               {expenseCategoryChoices.map((category) => {
@@ -4956,32 +5056,37 @@ export default function App() {
                 );
               })}
             </View>
-          </>
+          </View>
         ) : null}
 
-        <View style={styles.expenseNoteField}>
-          <Text style={styles.fieldLabel}>Description <Text style={styles.optionalLabel}>Optional</Text></Text>
-          <TextInput
-            style={styles.fieldInput}
-            value={expenseNote}
-            onChangeText={setExpenseNote}
-            placeholder="Lunch, fuel, coffee..."
-            placeholderTextColor={currentTheme.placeholder}
-            selectionColor={currentTheme.accent}
-          />
-        </View>
-
-        <View style={styles.expenseEssentialsCard}>
-          <View style={styles.expenseEssentialsHeader}>
-            <Text style={styles.expenseEssentialsTitle}>Details</Text>
-            <Text style={styles.expenseEssentialsMeta}>Optional except date</Text>
+        <View style={styles.expenseCoreFields}>
+          <View style={styles.expenseNoteField}>
+            <TextInput
+              style={styles.expenseDescriptionInput}
+              value={expenseNote}
+              onChangeText={setExpenseNote}
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                if (expenseCategoryId && Number(expenseAmount) > 0) {
+                  submitTransaction();
+                }
+              }}
+              placeholder="What was this for? (optional)"
+              placeholderTextColor={currentTheme.placeholder}
+              selectionColor={currentTheme.accent}
+            />
           </View>
+
           <Pressable style={styles.expenseDateRow} onPress={openExpenseDatePicker}>
             <View style={styles.expenseDetailCopy}>
               <Text style={styles.expenseDetailLabel}>Date</Text>
-              <Text style={styles.expenseDetailValue}>{formatExpenseDate(expenseDate, localeTag)}</Text>
+              <Text style={styles.expenseDetailValue}>
+                {expenseDate.toDateString() === new Date().toDateString()
+                  ? `Today · ${formatExpenseDate(expenseDate, localeTag)}`
+                  : formatExpenseDate(expenseDate, localeTag)}
+              </Text>
             </View>
-            <Text style={styles.expenseDetailChange}>Change</Text>
+            <Text style={styles.expensePickerChevron}>›</Text>
           </Pressable>
 
           {showExpenseDatePicker && Platform.OS === 'ios' ? (
@@ -4989,7 +5094,7 @@ export default function App() {
               <DateTimePicker
                 value={expenseDate}
                 mode="date"
-                display="spinner"
+                display="inline"
                 minimumDate={expenseDateBounds.start}
                 maximumDate={expenseDateBounds.end}
                 themeVariant="light"
@@ -5000,101 +5105,97 @@ export default function App() {
           ) : null}
 
           {selectedExpenseSubcategories.length > 0 ? (
-            <View style={styles.expenseSubcategoryBlock}>
-              <Text style={styles.expenseDetailLabel}>Subcategory</Text>
-              <View style={styles.chipWrap}>
-                <Pressable
-                  style={[styles.expenseOptionChip, !expenseSubcategory && styles.expenseOptionChipActive]}
-                  onPress={() => setExpenseSubcategory('')}
-                >
-                  <Text style={[styles.expenseOptionChipText, !expenseSubcategory && styles.expenseOptionChipTextActive]}>
-                    None
-                  </Text>
-                </Pressable>
-                {selectedExpenseSubcategories.map((subcategory) => {
-                  const selected = expenseSubcategory === subcategory;
-                  return (
-                    <Pressable
-                      key={subcategory}
-                      style={[styles.expenseOptionChip, selected && styles.expenseOptionChipActive]}
-                      onPress={() => setExpenseSubcategory(subcategory)}
-                    >
-                      <Text style={[styles.expenseOptionChipText, selected && styles.expenseOptionChipTextActive]}>
-                        {subcategory}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.expenseSecondaryRow}>
-            <Button
-              variant="ghost"
-              size="medium"
-              onPress={() => {
-                animateUi();
-                setShowExpenseDetails((current) => !current);
-              }}
-            >
-              {showExpenseDetails ? 'Hide more options' : 'More options'}
-            </Button>
-
-            {editingTransactionId ? (
-              <Button variant="ghost" size="medium" onPress={resetTransactionForm}>
-                Cancel
-              </Button>
-            ) : null}
-        </View>
-
-        {showExpenseDetails ? (
-          <View style={styles.expenseDetailsPanel}>
-            {bankAccounts.length > 0 ? (
-              <>
-                <Text style={styles.fieldLabel}>Paid from</Text>
-                <View style={styles.chipWrap}>
-                  {bankAccounts.map((account) => {
-                    const selected = account.id === expenseAccountId;
-
+            <View>
+              <Pressable
+                style={styles.expensePickerRow}
+                onPress={() => {
+                  setShowExpenseDatePicker(false);
+                  setShowExpenseAccountPicker(false);
+                  setShowExpenseSubcategoryPicker((current) => !current);
+                }}
+              >
+                <Text style={styles.expensePickerLabel}>Subcategory</Text>
+                <Text style={styles.expensePickerValue}>{expenseSubcategory || 'None'}</Text>
+                <Text style={styles.expensePickerChevron}>›</Text>
+              </Pressable>
+              {showExpenseSubcategoryPicker ? (
+                <View style={styles.expensePickerOptions}>
+                  {['', ...selectedExpenseSubcategories].map((subcategory) => {
+                    const selected = expenseSubcategory === subcategory;
                     return (
                       <Pressable
-                        key={account.id}
-                        style={[styles.filterChip, selected && styles.filterChipActive]}
-                        onPress={() => setExpenseAccountId(account.id)}
+                        key={subcategory || 'none'}
+                        style={styles.expensePickerOption}
+                        onPress={() => {
+                          setExpenseSubcategory(subcategory);
+                          setShowExpenseSubcategoryPicker(false);
+                        }}
                       >
-                        <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
-                          {account.name}
+                        <Text style={[styles.expensePickerOptionText, selected && styles.expensePickerOptionTextActive]}>
+                          {subcategory || 'No subcategory'}
                         </Text>
+                        {selected ? <Text style={styles.expensePickerCheck}>✓</Text> : null}
                       </Pressable>
                     );
                   })}
                 </View>
-              </>
-            ) : null}
-
-            <View style={styles.switchRow}>
-              <Text style={styles.switchLabel}>Repeat next month</Text>
-              <Switch
-                value={expenseRecurring}
-                onValueChange={setExpenseRecurring}
-                trackColor={{ false: currentTheme.switchOff, true: currentTheme.switchOn }}
-                thumbColor={expenseRecurring ? currentTheme.switchThumbOn : currentTheme.switchThumbOff}
-              />
+              ) : null}
             </View>
+          ) : null}
 
-          </View>
-        ) : null}
+          {bankAccounts.length > 0 ? (
+            <View>
+              <Pressable
+                style={styles.expensePickerRow}
+                onPress={() => {
+                  setShowExpenseDatePicker(false);
+                  setShowExpenseSubcategoryPicker(false);
+                  setShowExpenseAccountPicker((current) => !current);
+                }}
+              >
+                <Text style={styles.expensePickerLabel}>Paid from</Text>
+                <Text style={styles.expensePickerValue}>
+                  {bankAccounts.find((account) => account.id === expenseAccountId)?.name ?? 'Choose'}
+                </Text>
+                <Text style={styles.expensePickerChevron}>›</Text>
+              </Pressable>
+              {showExpenseAccountPicker ? (
+                <View style={styles.expensePickerOptions}>
+                  {bankAccounts.map((account) => {
+                    const selected = account.id === expenseAccountId;
+                    return (
+                      <Pressable
+                        key={account.id}
+                        style={styles.expensePickerOption}
+                        onPress={() => {
+                          setExpenseAccountId(account.id);
+                          setShowExpenseAccountPicker(false);
+                        }}
+                      >
+                        <Text style={[styles.expensePickerOptionText, selected && styles.expensePickerOptionTextActive]}>
+                          {account.name}
+                        </Text>
+                        {selected ? <Text style={styles.expensePickerCheck}>✓</Text> : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
 
-        <Button
-          variant="primary"
-          size="large"
-          onPress={submitTransaction}
-          style={styles.expenseSubmitButton}
-        >
-          {editingTransactionId ? 'Save changes' : 'Save expense'}
-        </Button>
+          <Pressable
+            style={styles.expenseRepeatRow}
+            onPress={() => setExpenseRecurring((current) => !current)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: expenseRecurring }}
+          >
+            <View style={[styles.expenseRepeatCheckbox, expenseRecurring && styles.expenseRepeatCheckboxActive]}>
+              {expenseRecurring ? <Text style={styles.expenseRepeatCheck}>✓</Text> : null}
+            </View>
+            <Text style={styles.expenseRepeatTitle}>Repeat next month</Text>
+          </Pressable>
+        </View>
       </>
     );
   };
@@ -5694,7 +5795,11 @@ export default function App() {
             const theme = categoryThemes[summary.category.themeId];
             return (
               <View key={summary.category.id} style={styles.planCategoryRow}>
-                <View style={styles.planCategoryMainRow}>
+                <Pressable
+                  style={styles.planCategoryMainRow}
+                  onPress={() => openCategoryDetail(summary.category.id)}
+                  accessibilityLabel={`Open ${summary.category.name}`}
+                >
                   <View style={[styles.planCategoryIcon, { backgroundColor: theme.bubble }]}>
                     <Text style={[styles.planCategoryIconText, { color: theme.bubbleText }]}>
                       {getCategoryIcon(summary.category.name)}
@@ -5703,11 +5808,28 @@ export default function App() {
                   <View style={styles.planCategoryCopy}>
                     <Text style={styles.planCategoryName}>{summary.category.name}</Text>
                     <Text style={styles.planCategoryMeta}>
-                      {formatCurrency(summary.spent)} spent · {formatCurrency(summary.left)} left
+                      {formatCurrency(summary.spent)} of {formatCurrency(summary.category.planned)} spent
                     </Text>
                   </View>
-                  <Text style={styles.planCategoryPlanned}>{formatCurrency(summary.category.planned)}</Text>
-                </View>
+                  <View style={styles.homePlanRemaining}>
+                    <Text
+                      style={[
+                        styles.homePlanRemainingValue,
+                        summary.left < 0 && styles.homePlanRemainingAlert,
+                      ]}
+                    >
+                      {formatCurrency(Math.abs(summary.left))}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.homePlanRemainingLabel,
+                        summary.left < 0 && styles.homePlanRemainingAlert,
+                      ]}
+                    >
+                      {summary.left < 0 ? 'over' : 'remaining'}
+                    </Text>
+                  </View>
+                </Pressable>
 
                 <View style={[styles.categoryTrack, { backgroundColor: currentTheme.progressTrack }]}>
                   <View
@@ -9537,7 +9659,10 @@ export default function App() {
         visible={isExpenseSheetOpen}
         onRequestClose={resetTransactionForm}
       >
-        <View style={styles.sheetBackdrop}>
+        <KeyboardAvoidingView
+          style={styles.sheetBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <Pressable style={styles.sheetDismissArea} onPress={resetTransactionForm} />
           <View style={styles.sheetCard}>
             <View style={styles.sheetHandle} />
@@ -9553,6 +9678,8 @@ export default function App() {
                 <Text style={styles.sheetSubtitle}>
                   {editingTransactionId
                     ? 'Update only what changed.'
+                    : expenseContextCategoryId && selectedExpenseCategorySummary
+                      ? `${formatCurrency(selectedExpenseCategorySummary.spent)} of ${formatCurrency(selectedExpenseCategorySummary.category.planned)} spent`
                     : 'A quick, clear entry for this month.'}
                 </Text>
               </View>
@@ -9573,8 +9700,47 @@ export default function App() {
             >
               {renderExpenseForm()}
             </ScrollView>
+            {activeMonth.categories.length > 0 ? (
+              <View style={styles.expenseStickyFooter}>
+                {expenseContextCategoryId ? (
+                  <View style={styles.expenseConfirmationBar}>
+                    <View style={styles.expenseConfirmationCopy}>
+                      <Text style={styles.expenseConfirmationAmount}>
+                        {Number(expenseAmount) > 0 ? formatCurrency(Number(expenseAmount)) : 'Enter amount'}
+                      </Text>
+                      <Text style={styles.expenseConfirmationMeta} numberOfLines={1}>
+                        {[selectedExpenseCategory?.name, expenseSubcategory].filter(Boolean).join(' · ')}
+                      </Text>
+                    </View>
+                    <Button
+                      variant="primary"
+                      size="medium"
+                      onPress={submitTransaction}
+                      disabled={!expenseCategoryId || !Number(expenseAmount) || Number(expenseAmount) <= 0}
+                      style={styles.expenseSubmitButtonCompact}
+                    >
+                      {editingTransactionId ? 'Save' : 'Add'}
+                    </Button>
+                  </View>
+                ) : (
+                  <Button
+                    variant="primary"
+                    size="large"
+                    onPress={submitTransaction}
+                    disabled={!expenseCategoryId || !Number(expenseAmount) || Number(expenseAmount) <= 0}
+                    style={styles.expenseSubmitButton}
+                  >
+                    {editingTransactionId
+                      ? 'Save changes'
+                      : Number(expenseAmount) > 0
+                        ? `Add ${formatCurrency(Number(expenseAmount))}`
+                        : 'Add expense'}
+                  </Button>
+                )}
+              </View>
+            ) : null}
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
       <Modal
         animationType="slide"
@@ -9604,7 +9770,6 @@ export default function App() {
                   </Text>
                 </View>
                 <View style={styles.categoryDetailHeaderCopy}>
-                  <Text style={styles.categoryDetailEyebrow}>CATEGORY</Text>
                   <Text style={styles.categoryDetailTitle}>{selectedCategoryDetail.name}</Text>
                   <Text style={styles.categoryDetailHeaderMeta}>
                     {categoryBucketMeta[selectedCategoryDetail.bucket].label}
@@ -9711,14 +9876,18 @@ export default function App() {
                       openExpenseCapture(nextCategoryId, null);
                     }}
                   >
-                    <Text style={styles.categoryDetailPrimaryActionText}>＋ Expense</Text>
+                    <Text style={styles.categoryDetailPrimaryActionIcon}>＋</Text>
+                    <Text style={styles.categoryDetailPrimaryActionText}>Add expense</Text>
                   </Pressable>
                   <Pressable
                     style={styles.categoryDetailSecondaryAction}
                     onPress={() => setShowCategoryDetailSubcategoryInput((current) => !current)}
                   >
+                    <Text style={styles.categoryDetailSecondaryActionIcon}>
+                      {showCategoryDetailSubcategoryInput ? '×' : '＋'}
+                    </Text>
                     <Text style={styles.categoryDetailSecondaryActionText}>
-                      {showCategoryDetailSubcategoryInput ? 'Cancel' : '＋ Subcategory'}
+                      {showCategoryDetailSubcategoryInput ? 'Close' : 'Add subcategory'}
                     </Text>
                   </Pressable>
                 </View>
@@ -9739,17 +9908,17 @@ export default function App() {
                           (sum, transaction) => sum + transaction.amount,
                           0,
                         );
+                        const subcategoryPlanned =
+                          selectedCategoryDetail.subcategoryBudgets?.[subcategory] ?? 0;
+                        const subcategoryRemaining = subcategoryPlanned - subcategorySpent;
+                        const subcategoryRatio = subcategoryPlanned > 0
+                          ? subcategorySpent / subcategoryPlanned
+                          : 0;
 
                         return (
-                          <Pressable
+                          <View
                             key={subcategory}
                             style={styles.categoryDetailSubcategoryRow}
-                            onPress={() => {
-                              const nextCategoryId = selectedCategoryDetail.id;
-                              closeCategoryDetail();
-                              openExpenseCapture(nextCategoryId, null, subcategory);
-                            }}
-                            accessibilityLabel={`${subcategory}, ${formatCurrency(subcategorySpent)} spent. Add expense.`}
                           >
                             <View
                               style={[
@@ -9768,17 +9937,66 @@ export default function App() {
                             </View>
                             <View style={styles.categoryDetailSubcategoryCopy}>
                               <Text style={styles.categoryDetailSubcategoryName}>{subcategory}</Text>
+                              <Text style={styles.categoryDetailSubcategoryMeta}>
+                                {subcategoryPlanned > 0
+                                  ? `${formatCurrency(subcategorySpent)} of ${formatCurrency(subcategoryPlanned)} spent`
+                                  : `${formatCurrency(subcategorySpent)} spent · no budget`}
+                              </Text>
+                              {subcategoryPlanned > 0 ? (
+                                <View
+                                  style={[
+                                    styles.categoryDetailSubcategoryTrack,
+                                    { backgroundColor: currentTheme.progressTrack },
+                                  ]}
+                                >
+                                  <View
+                                    style={[
+                                      styles.categoryDetailSubcategoryFill,
+                                      {
+                                        width: `${Math.round(clamp(subcategoryRatio) * 100)}%`,
+                                        backgroundColor:
+                                          subcategoryRatio >= 1
+                                            ? currentTheme.progressAlert
+                                            : subcategoryRatio >= 0.82
+                                              ? currentTheme.progressWarning
+                                              : currentTheme.progressGood,
+                                      },
+                                    ]}
+                                  />
+                                </View>
+                              ) : null}
                             </View>
                             <View style={styles.categoryDetailSubcategoryAmountBlock}>
                               <Text style={styles.categoryDetailSubcategoryAmount}>
-                                {formatCurrency(subcategorySpent)}
+                                {formatCurrency(Math.abs(subcategoryRemaining))}
                               </Text>
-                              <Text style={styles.categoryDetailSubcategoryAmountLabel}>spent</Text>
+                              <Text style={styles.categoryDetailSubcategoryAmountLabel}>
+                                {subcategoryPlanned > 0
+                                  ? subcategoryRemaining < 0 ? 'over' : 'remaining'
+                                  : 'spent'}
+                              </Text>
                             </View>
-                            <View style={styles.categoryDetailSubcategoryQuickAdd}>
-                              <Text style={styles.categoryDetailSubcategoryQuickAddText}>＋</Text>
+                            <View style={styles.categoryDetailSubcategoryActions}>
+                              <Pressable
+                                style={styles.categoryDetailSubcategoryQuickAdd}
+                                onPress={() => {
+                                  const nextCategoryId = selectedCategoryDetail.id;
+                                  closeCategoryDetail();
+                                  openExpenseCapture(nextCategoryId, null, subcategory);
+                                }}
+                                accessibilityLabel={`Add expense to ${subcategory}`}
+                              >
+                                <Text style={styles.categoryDetailSubcategoryQuickAddText}>Add</Text>
+                              </Pressable>
+                              <Pressable
+                                style={styles.categoryDetailSubcategoryDelete}
+                                onPress={() => deleteSubcategory(selectedCategoryDetail.id, subcategory)}
+                                accessibilityLabel={`Delete ${subcategory}`}
+                              >
+                                <Text style={styles.categoryDetailSubcategoryDeleteText}>Delete</Text>
+                              </Pressable>
                             </View>
-                          </Pressable>
+                          </View>
                         );
                       })}
                     </View>
@@ -9786,26 +10004,40 @@ export default function App() {
 
                   {showCategoryDetailSubcategoryInput ? (
                     <View style={styles.categoryDetailSubcategoryComposer}>
-                      <Text style={styles.categoryDetailSubcategoryComposerLabel}>SUBCATEGORY NAME</Text>
+                      <Text style={styles.categoryDetailSubcategoryComposerLabel}>NEW SUBCATEGORY</Text>
                       <View style={styles.categoryDetailSubcategoryComposerRow}>
                         <TextInput
                           style={styles.categoryDetailSubcategoryInput}
                           value={categoryDetailSubcategoryName}
                           onChangeText={setCategoryDetailSubcategoryName}
                           autoFocus
-                          returnKeyType="done"
-                          onSubmitEditing={addCategoryDetailSubcategory}
+                          returnKeyType="next"
                           placeholder="e.g. Coffee"
                           placeholderTextColor={currentTheme.placeholder}
                         />
-                        <Pressable
-                          style={[styles.categoryDetailSubcategorySave, !categoryDetailSubcategoryName.trim() && styles.buttonDisabled]}
-                          onPress={addCategoryDetailSubcategory}
-                          disabled={!categoryDetailSubcategoryName.trim()}
-                        >
-                          <Text style={styles.categoryDetailSubcategorySaveText}>Add subcategory</Text>
-                        </Pressable>
+                        <View style={styles.categoryDetailSubcategoryBudgetInputWrap}>
+                          <Text style={styles.categoryDetailSubcategoryBudgetCurrency}>
+                            {activeMonthCurrencyMarker}
+                          </Text>
+                          <TextInput
+                            style={styles.categoryDetailSubcategoryBudgetInput}
+                            value={categoryDetailSubcategoryBudget}
+                            onChangeText={setCategoryDetailSubcategoryBudget}
+                            keyboardType="numeric"
+                            returnKeyType="done"
+                            onSubmitEditing={addCategoryDetailSubcategory}
+                            placeholder="Budget"
+                            placeholderTextColor={currentTheme.placeholder}
+                          />
+                        </View>
                       </View>
+                      <Pressable
+                        style={[styles.categoryDetailSubcategorySave, !categoryDetailSubcategoryName.trim() && styles.buttonDisabled]}
+                        onPress={addCategoryDetailSubcategory}
+                        disabled={!categoryDetailSubcategoryName.trim()}
+                      >
+                        <Text style={styles.categoryDetailSubcategorySaveText}>Add subcategory</Text>
+                      </Pressable>
                     </View>
                   ) : null}
                   </View>
@@ -9814,13 +10046,8 @@ export default function App() {
                 {selectedCategoryTransactions.length > 0 ? (
                   <View style={styles.categoryDetailActivity}>
                     <View style={styles.categoryDetailSectionHeader}>
-                      <View>
-                        <Text style={styles.categoryDetailSectionEyebrow}>ACTIVITY</Text>
-                        <Text style={styles.categoryDetailSectionTitle}>Recent expenses</Text>
-                      </View>
-                      <Text style={styles.categoryDetailSectionCount}>
-                        {selectedCategoryTransactions.length} recent
-                      </Text>
+                      <Text style={styles.categoryDetailSectionTitle}>Expenses</Text>
+                      <Text style={styles.categoryDetailSectionCount}>{selectedCategoryTransactions.length}</Text>
                     </View>
 
                     <View style={styles.categoryDetailTransactionList}>
@@ -12490,7 +12717,7 @@ const createStyles = (
       marginBottom: 10,
     },
     expenseFormStack: {
-      gap: 7,
+      gap: 5,
       marginBottom: 8,
     },
     fieldCard: {
@@ -12535,28 +12762,25 @@ const createStyles = (
       fontWeight: '500',
     },
     expenseNoteField: {
-      backgroundColor: 'transparent',
-      borderRadius: 0,
-      borderWidth: 0,
+      paddingHorizontal: 13,
+      paddingTop: 10,
+      paddingBottom: 9,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.divider,
-      paddingHorizontal: 0,
-      paddingVertical: 6,
-      marginTop: 8,
+      borderBottomColor: theme.divider,
+    },
+    expenseDescriptionInput: {
+      color: theme.text,
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '600',
+      paddingVertical: 5,
     },
     expenseSectionHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
       gap: 10,
-      marginBottom: 8,
-    },
-    expenseSectionMeta: {
-      color: theme.textMuted,
-      fontSize: 10,
-      fontWeight: '700',
-      textTransform: 'uppercase',
-      letterSpacing: 0.4,
+      marginBottom: 5,
     },
     fieldInput: {
       fontSize: 14,
@@ -12579,6 +12803,28 @@ const createStyles = (
       paddingHorizontal: 13,
       paddingTop: 12,
       paddingBottom: 10,
+    },
+    expenseEntryAmountCard: {
+      paddingHorizontal: 2,
+      paddingTop: 2,
+      paddingBottom: 7,
+      borderBottomWidth: 2,
+      borderBottomColor: theme.accentBorder,
+    },
+    expenseEntryAmountInput: {
+      flex: 1,
+      color: theme.text,
+      fontSize: isCompact ? 32 : 35,
+      lineHeight: isCompact ? 37 : 40,
+      fontWeight: '800',
+      letterSpacing: -0.5,
+      paddingVertical: 2,
+    },
+    expenseEntryAmountCurrency: {
+      color: theme.accentText,
+      fontSize: 20,
+      fontWeight: '800',
+      paddingTop: 3,
     },
     expenseAmountLabel: {
       color: theme.heroText,
@@ -12608,30 +12854,6 @@ const createStyles = (
       fontWeight: '600',
       marginTop: 2,
     },
-    quickAmountRow: {
-      flexDirection: 'row',
-      gap: 6,
-    },
-    quickAmountChip: {
-      flex: 1,
-      backgroundColor: 'transparent',
-      borderRadius: 10,
-      paddingVertical: 7,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 0,
-    },
-    quickAmountChipActive: {
-      backgroundColor: theme.accentSoft,
-    },
-    quickAmountChipText: {
-      color: theme.textMuted,
-      fontWeight: '800',
-      fontSize: 11,
-    },
-    quickAmountChipTextActive: {
-      color: theme.accentText,
-    },
     expenseCategoryChip: {
       borderRadius: 13,
       paddingHorizontal: 10,
@@ -12642,41 +12864,26 @@ const createStyles = (
       fontWeight: '700',
       textTransform: 'capitalize',
     },
-    expenseEssentialsCard: {
-      marginTop: 9,
-      padding: 0,
-      gap: 7,
-      borderRadius: 0,
-      backgroundColor: 'transparent',
-      borderWidth: 0,
+    expenseCategorySection: {
+      marginBottom: 12,
     },
-    expenseEssentialsHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 10,
-    },
-    expenseEssentialsTitle: {
-      color: theme.text,
-      fontSize: 13,
-      fontWeight: '800',
-    },
-    expenseEssentialsMeta: {
-      color: theme.textSoft,
-      fontSize: 9,
-      fontWeight: '700',
+    expenseCoreFields: {
+      backgroundColor: theme.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      overflow: 'hidden',
+      marginTop: 2,
     },
     expenseDateRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      minHeight: 44,
-      paddingHorizontal: 0,
-      paddingVertical: 6,
+      minHeight: 50,
+      paddingHorizontal: 13,
+      paddingVertical: 7,
       borderRadius: 0,
       backgroundColor: 'transparent',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: theme.divider,
     },
     expenseDetailCopy: {
       flex: 1,
@@ -12693,51 +12900,137 @@ const createStyles = (
       fontWeight: '800',
       marginTop: 2,
     },
-    expenseDetailChange: {
-      color: theme.accentText,
-      fontSize: 10,
-      fontWeight: '800',
+    expensePickerRow: {
+      minHeight: 48,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 13,
+      paddingVertical: 8,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.divider,
     },
-    expenseSubcategoryBlock: {
-      gap: 6,
-      paddingTop: 2,
-    },
-    expenseOptionChip: {
-      borderRadius: 999,
-      paddingHorizontal: 9,
-      paddingVertical: 6,
-      backgroundColor: theme.surfaceMuted,
-      borderWidth: 1,
-      borderColor: theme.divider,
-    },
-    expenseOptionChipActive: {
-      backgroundColor: theme.accentSoft,
-      borderColor: theme.accentBorder,
-    },
-    expenseOptionChipText: {
+    expensePickerLabel: {
       color: theme.textMuted,
       fontSize: 11,
       fontWeight: '700',
     },
-    expenseOptionChipTextActive: {
+    expensePickerValue: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '800',
+      textAlign: 'right',
+    },
+    expensePickerChevron: {
+      color: theme.textSoft,
+      fontSize: 21,
+      lineHeight: 22,
+      fontWeight: '500',
+    },
+    expensePickerOptions: {
+      paddingHorizontal: 13,
+      paddingBottom: 7,
+      backgroundColor: theme.surfaceTint,
+    },
+    expensePickerOption: {
+      minHeight: 38,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.divider,
+    },
+    expensePickerOptionText: {
+      color: theme.textMuted,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    expensePickerOptionTextActive: {
       color: theme.accentText,
       fontWeight: '900',
     },
+    expensePickerCheck: {
+      color: theme.accentText,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    expenseRepeatRow: {
+      minHeight: 42,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      paddingHorizontal: 13,
+      paddingVertical: 6,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.divider,
+    },
+    expenseRepeatCheckbox: {
+      width: 18,
+      height: 18,
+      borderRadius: 5,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.surface,
+    },
+    expenseRepeatCheckboxActive: {
+      backgroundColor: theme.accent,
+      borderColor: theme.accent,
+    },
+    expenseRepeatCheck: {
+      color: theme.heroText,
+      fontSize: 11,
+      lineHeight: 12,
+      fontWeight: '900',
+    },
+    expenseRepeatTitle: {
+      color: theme.text,
+      fontSize: 11,
+      fontWeight: '800',
+    },
     expenseSubmitButton: {
       alignSelf: 'stretch',
-      paddingVertical: 12,
-      borderRadius: 16,
-      marginTop: 10,
+      paddingVertical: 11,
+      borderRadius: 14,
+    },
+    expenseSubmitButtonCompact: {
+      minWidth: 76,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: 12,
+    },
+    expenseConfirmationBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 14,
+    },
+    expenseConfirmationCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    expenseConfirmationAmount: {
+      color: theme.text,
+      fontSize: 15,
+      fontWeight: '900',
+    },
+    expenseConfirmationMeta: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '700',
+      marginTop: 2,
+    },
+    expenseStickyFooter: {
+      paddingTop: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.divider,
+      backgroundColor: theme.surface,
     },
     expenseSubmitButtonText: {
       fontSize: 16,
       letterSpacing: 0.2,
-    },
-    expenseSecondaryRow: {
-      flexDirection: 'row',
-      gap: 8,
-      alignItems: 'center',
-      marginTop: 4,
     },
     sheetCloseButton: {
       width: 36,
@@ -12790,17 +13083,6 @@ const createStyles = (
       flexWrap: 'wrap',
       gap: 8,
       marginBottom: 2,
-    },
-    expenseDetailsPanel: {
-      backgroundColor: 'transparent',
-      borderRadius: 0,
-      borderWidth: 0,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: theme.divider,
-      paddingHorizontal: 0,
-      paddingVertical: 9,
-      gap: 9,
-      marginTop: 6,
     },
     categorySuggestionBlock: {
       marginTop: 4,
@@ -14200,15 +14482,12 @@ const createStyles = (
     },
     categoryDetailContent: {
       paddingBottom: 4,
-      gap: 10,
+      gap: 14,
     },
     categoryDetailHero: {
-      backgroundColor: theme.surfaceMuted,
-      borderRadius: 18,
-      borderWidth: 1,
-      borderColor: theme.divider,
-      padding: 13,
-      gap: 8,
+      paddingHorizontal: 2,
+      paddingVertical: 6,
+      gap: 7,
     },
     categoryDetailHeroEyebrow: {
       color: theme.textSoft,
@@ -14228,11 +14507,10 @@ const createStyles = (
     },
     categoryDetailSpentValue: {
       color: theme.text,
-      fontSize: isCompact ? 28 : 31,
-      lineHeight: isCompact ? 32 : 35,
-      fontWeight: '900',
-      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
-      letterSpacing: -0.6,
+      fontSize: isCompact ? 20 : 22,
+      lineHeight: isCompact ? 24 : 26,
+      fontWeight: '800',
+      letterSpacing: -0.3,
     },
     categoryDetailSpentLabel: {
       color: theme.textMuted,
@@ -14280,16 +14558,25 @@ const createStyles = (
     },
     categoryDetailActions: {
       flexDirection: 'row',
+      alignItems: 'center',
       gap: 8,
     },
     categoryDetailPrimaryAction: {
       flex: 1,
-      minHeight: 40,
-      borderRadius: 13,
+      flexDirection: 'row',
+      minHeight: 38,
+      borderRadius: 12,
       backgroundColor: theme.accent,
       alignItems: 'center',
       justifyContent: 'center',
+      gap: 6,
       paddingHorizontal: 14,
+    },
+    categoryDetailPrimaryActionIcon: {
+      color: theme.heroText,
+      fontSize: 16,
+      lineHeight: 18,
+      fontWeight: '700',
     },
     categoryDetailPrimaryActionText: {
       color: theme.heroText,
@@ -14298,12 +14585,22 @@ const createStyles = (
     },
     categoryDetailSecondaryAction: {
       flex: 1,
-      minHeight: 40,
-      borderRadius: 13,
-      backgroundColor: theme.surfaceTint,
+      flexDirection: 'row',
+      minHeight: 38,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.accentBorder,
+      backgroundColor: theme.accentSoft,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 14,
+      gap: 5,
+      paddingHorizontal: 10,
+    },
+    categoryDetailSecondaryActionIcon: {
+      color: theme.accentText,
+      fontSize: 15,
+      lineHeight: 17,
+      fontWeight: '700',
     },
     categoryDetailSecondaryActionText: {
       color: theme.accentText,
@@ -14311,12 +14608,7 @@ const createStyles = (
       fontWeight: '800',
     },
     categoryDetailSubcategories: {
-      backgroundColor: theme.surface,
-      borderRadius: 18,
-      borderWidth: 1,
-      borderColor: theme.divider,
-      padding: 12,
-      gap: 11,
+      gap: 8,
     },
     categoryDetailSubcategoryHeader: {
       flexDirection: 'row',
@@ -14326,10 +14618,9 @@ const createStyles = (
     },
     categoryDetailSubcategoryTitle: {
       color: theme.text,
-      fontSize: 16,
+      fontSize: 14,
       fontWeight: '800',
       marginTop: 2,
-      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
     },
     categoryDetailSubcategoryAdd: {
       paddingHorizontal: 9,
@@ -14343,7 +14634,8 @@ const createStyles = (
       fontWeight: '900',
     },
     categoryDetailSubcategoryList: {
-      borderRadius: 15,
+      backgroundColor: theme.surface,
+      borderRadius: 16,
       borderWidth: 1,
       borderColor: theme.divider,
       overflow: 'hidden',
@@ -14355,7 +14647,7 @@ const createStyles = (
       gap: 10,
       paddingHorizontal: 10,
       paddingVertical: 9,
-      backgroundColor: theme.surfaceMuted,
+      backgroundColor: theme.surface,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.divider,
     },
@@ -14384,8 +14676,19 @@ const createStyles = (
       fontSize: 10,
       marginTop: 2,
     },
+    categoryDetailSubcategoryTrack: {
+      height: 4,
+      borderRadius: 999,
+      overflow: 'hidden',
+      marginTop: 6,
+    },
+    categoryDetailSubcategoryFill: {
+      height: '100%',
+      borderRadius: 999,
+    },
     categoryDetailSubcategoryAmountBlock: {
       alignItems: 'flex-end',
+      minWidth: 54,
     },
     categoryDetailSubcategoryAmount: {
       color: theme.text,
@@ -14398,19 +14701,36 @@ const createStyles = (
       fontWeight: '700',
       marginTop: 1,
     },
+    categoryDetailSubcategoryActions: {
+      alignItems: 'stretch',
+      gap: 2,
+    },
     categoryDetailSubcategoryQuickAdd: {
-      width: 30,
+      minWidth: 42,
       height: 30,
       borderRadius: 10,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: theme.accentSoft,
+      paddingHorizontal: 8,
     },
     categoryDetailSubcategoryQuickAddText: {
       color: theme.accentText,
-      fontSize: 16,
-      lineHeight: 17,
-      fontWeight: '900',
+      fontSize: 10,
+      lineHeight: 13,
+      fontWeight: '800',
+    },
+    categoryDetailSubcategoryDelete: {
+      minWidth: 42,
+      minHeight: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    categoryDetailSubcategoryDeleteText: {
+      color: theme.alertText,
+      fontSize: 9,
+      fontWeight: '800',
     },
     categoryDetailSubcategoryEmpty: {
       borderRadius: 14,
@@ -14446,11 +14766,13 @@ const createStyles = (
       letterSpacing: 0.8,
     },
     categoryDetailSubcategoryComposerRow: {
+      flexDirection: 'row',
       alignItems: 'stretch',
       gap: 7,
     },
     categoryDetailSubcategoryInput: {
-      width: '100%',
+      flex: 1,
+      minWidth: 0,
       minHeight: 38,
       borderRadius: 11,
       backgroundColor: theme.surface,
@@ -14461,8 +14783,33 @@ const createStyles = (
       paddingHorizontal: 11,
       paddingVertical: 8,
     },
+    categoryDetailSubcategoryBudgetInputWrap: {
+      width: 112,
+      minHeight: 38,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderRadius: 11,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.accentBorder,
+      paddingHorizontal: 9,
+    },
+    categoryDetailSubcategoryBudgetCurrency: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    categoryDetailSubcategoryBudgetInput: {
+      flex: 1,
+      minWidth: 0,
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '800',
+      paddingVertical: 8,
+    },
     categoryDetailSubcategorySave: {
-      minHeight: 42,
+      minHeight: 38,
       borderRadius: 11,
       alignItems: 'center',
       justifyContent: 'center',
@@ -14492,9 +14839,8 @@ const createStyles = (
     },
     categoryDetailSectionTitle: {
       color: theme.text,
-      fontSize: 16,
+      fontSize: 14,
       fontWeight: '800',
-      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
       marginTop: 2,
     },
     categoryDetailSectionCount: {

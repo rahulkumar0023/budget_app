@@ -20,6 +20,7 @@ const buildCategory = (overrides: Partial<Category> = {}): Category => ({
   name: overrides.name ?? 'Recurring',
   planned: overrides.planned ?? 1000,
   subcategories: overrides.subcategories ?? [],
+  subcategoryBudgets: overrides.subcategoryBudgets,
   bucket: overrides.bucket ?? 'needs',
   themeId: overrides.themeId ?? 'citrus',
   recurring: overrides.recurring ?? true,
@@ -201,6 +202,43 @@ test('normalizeBudgetAppState drops malformed restored data without inventing re
   assert.equal(normalized.months.length, 1);
   assert.equal(normalized.months[0]?.monthlyLimit, '0');
   assert.deepEqual(normalized.months[0]?.transactions.map((transaction) => transaction.id), ['txn-1']);
+});
+
+test('normalizeBudgetAppState preserves valid subcategory budgets only', () => {
+  const normalized = normalizeBudgetAppState(
+    {
+      version: 5,
+      activeMonthId: '2026-04',
+      months: [
+        buildMonth({
+          categories: [
+            buildCategory({
+              subcategories: ['Coffee', 'Dining'],
+              subcategoryBudgets: { Coffee: 80, Dining: 120, Removed: 50, Invalid: -1 },
+            }),
+          ],
+        }),
+      ],
+      accounts: [],
+      goals: [],
+      preferences: {
+        appThemeId: 'indigo',
+        cloudBackupEnabled: false,
+        currencyCode: 'EUR',
+        languageCode: 'en',
+        recentCurrencyCodes: [],
+        recentLanguageCodes: [],
+      },
+      updatedAt: Date.now(),
+    },
+    new Date('2026-04-09T12:00:00.000Z'),
+  );
+
+  assert.ok(normalized);
+  assert.deepEqual(normalized.months[0]?.categories[0]?.subcategoryBudgets, {
+    Coffee: 80,
+    Dining: 120,
+  });
 });
 
 test('isValidMonthId accepts calendar months only', () => {

@@ -63,6 +63,7 @@ export type Category = {
   name: string;
   planned: number;
   subcategories: string[];
+  subcategoryBudgets?: Record<string, number>;
   bucket: CategoryBucket;
   themeId: ThemeId;
   recurring: boolean;
@@ -1507,11 +1508,21 @@ const normalizeCategory = (value: unknown, index: number): Category | null => {
     return null;
   }
 
+  const subcategories = parseSubcategoryInput(value.subcategories);
+  const rawSubcategoryBudgets = isRecord(value.subcategoryBudgets) ? value.subcategoryBudgets : {};
+  const subcategoryBudgets = Object.fromEntries(
+    subcategories.flatMap((subcategory) => {
+      const amount = toFiniteNumber(rawSubcategoryBudgets[subcategory]);
+      return amount > 0 ? [[subcategory, amount]] : [];
+    }),
+  );
+
   return {
     id: typeof value.id === 'string' && value.id ? value.id : createId('cat'),
     name,
     planned,
-    subcategories: parseSubcategoryInput(value.subcategories),
+    subcategories,
+    subcategoryBudgets,
     bucket:
       typeof value.bucket === 'string' &&
       categoryBucketOrder.includes(value.bucket as CategoryBucket)

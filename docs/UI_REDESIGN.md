@@ -167,6 +167,11 @@ Changes made:
 - Subcategories can be added with a full-width inline form. They are displayed as structured rows rather than chips, including an initial, amount spent, and a dedicated quick-add control. Tapping a row opens expense entry with that subcategory selected.
 - The category workspace keeps its actions to one compact row: **+ Expense** and **+ Subcategory**. Empty subcategory messaging and repeated instructional labels are hidden; the subcategory section appears only when it contains rows or its add form is open.
 - Adding an expense from a category keeps that category fixed and immediately exposes amount, description, date, and optional subcategory fields. Starting from a subcategory row preselects both the category and subcategory. The Save expense action follows these fields so the user can review the complete entry before saving.
+- **Categories at a glance** is now the reference pattern across category surfaces: compact ledger rows, clear spent-of-planned copy, remaining amount at the edge, strong progress contrast, subtle dividers, and minimal nested cards. Plan and category detail should extend this language instead of introducing separate dashboard-style blocks.
+- Category detail was flattened into a continuous workspace with a smaller progress summary, compact inline actions, and list-style subcategory and expense sections. Expense entry opened from a category now carries the category's spent, planned, and remaining context in the sheet header.
+- Category detail uses direct task labels: **Add expense**, **Add subcategory**, and **Expenses**. Generic **Activity** and **Recent expenses** headings were removed, subcategory quick-add controls use the explicit label **Add**, and Plan category summaries now open the focused category workspace when tapped.
+- New subcategories can optionally receive a planned amount. Budgeted subcategory rows reuse the spent-of-planned, remaining, and progress treatment from Categories at a glance; unbudgeted subcategories continue to work without a target. Combined subcategory allocations are validated against the parent category budget.
+- Every subcategory row has explicit Add and Delete controls. Deletion is confirmed, releases any assigned subcategory budget, and keeps attached expenses safely in the parent category after clearing only their subcategory label.
 - Added a focused first-budget state that leads directly to Plan setup.
 
 ### Transactions
@@ -189,11 +194,17 @@ Expense entry is amount-first:
 - date, account, recurrence, and other secondary fields remain behind **Add details**; and
 - the primary action uses the direct label **Save expense**.
 
-The expense sheet was refined into one calm sequence: amount, category when needed, description, date, optional subcategory, and Save. Date is always visible rather than hidden behind details. Account and monthly repeat controls live under one **More options** action. Recent-template shortcuts and Smart Match controls were removed from this primary flow so they do not compete with expense entry. When opened from a category, the sheet title names that category and does not repeat a category selector.
+An earlier refinement established the calm sequence of amount, category when needed, description, date, optional subcategory, and Save. The latest pass keeps that sequence but brings relevant account and repeat controls into the grouped form instead of hiding them. When opened from a category, the sheet title names that category and does not repeat a category selector.
 
 The final density pass reduced the expense amount typography, card radii, internal padding, shortcut chips, date row, subcategory controls, gaps, and Save button height. The interface remains comfortably tappable but no longer feels oversized on a phone.
 
-A subsequent flattening pass removed nested surfaces from expense entry. The amount remains the single branded card; description, date, and advanced options now use open rows and subtle dividers. Quick amounts are plain text actions until selected. This prevents the sheet from looking like a stack of unrelated boxes.
+The expense sheet was redesigned again as a three-part entry: a quiet amount panel, one grouped details list, and a primary action that names the amount being added. Generic details headings, preset amounts, the “recent first” label, and the More Options disclosure were removed. Description has a clearer writing area, date opens an inline calendar on iOS or the native picker elsewhere, account selection appears only when relevant, and Repeat next month is a small inline preference. A valid entry can be saved from the keyboard.
+
+The receipt-style refinement removes the amount card border, uses the description placeholder instead of another visible label, and collapses subcategory and account choices into single-value rows. Their options expand only on demand. Repeat next month uses a compact checkbox, the category context line is shortened to spent-of-planned, and the amount-confirming action remains fixed below the scrolling form.
+
+When expense entry starts from a category, its fixed footer becomes a compact confirmation bar: amount and category/subcategory context sit on the left, with a small explicit Add or Save action on the right.
+
+A subsequent flattening pass removed nested surfaces from expense entry. The current design retains one quiet amount surface and one grouped details list, preventing the sheet from looking like a stack of unrelated boxes.
 
 Changes made:
 

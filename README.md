@@ -16,13 +16,22 @@ Budget Buddy is a simple Expo React Native app to help users track monthly budge
 - Set a monthly budget limit per category
 - Add, edit and remove expense entries
 - Add expenses from inside a category with amount, description, date, and optional subcategory
+- Optionally assign part of a category budget to each subcategory and track its spent and remaining amounts
 - View planned, spent, and remaining totals per category
 - Monthly summary and simple charts
 - Optional Firebase backup and authentication
 
 ## Expense-entry design
 
-Expense entry uses a compact, amount-first flow designed for quick mobile use. The amount is the only prominent card, while description, date, and advanced options use open rows with subtle dividers instead of nested boxes. Date is always visible, subcategories appear when available, and account or repeat settings remain under **More options**. Opening the form from a category keeps that category selected; opening it from a subcategory selects both automatically.
+Expense entry uses a compact receipt-style flow designed for quick mobile use. The amount sits on an open input line, followed by one grouped list with a placeholder-led description, calendar date, and single-value subcategory or account rows that reveal choices only when tapped. Repeat next month is a small checkbox, and the amount-confirming action stays fixed at the bottom of the sheet. The keyboard Done action can also save a valid entry. Opening the form from a category keeps that category and its current spent-of-planned context visible; opening it from a subcategory selects both automatically.
+
+## Category design pattern
+
+**Categories at a glance** is the reference pattern for category-related screens. Reuse its compact ledger rows, icon-and-name hierarchy, `amount of budget spent` wording, right-aligned remaining amount, visible progress bar, subtle dividers, and low use of separate cards. Category detail and Plan should feel like deeper versions of this same pattern, with actions kept close to the item they affect.
+
+Subcategory budgets are optional allocations within the parent category budget. Their combined planned amounts cannot exceed the parent category amount. Existing subcategories without an allocation remain valid and show spending without a progress target.
+
+Subcategories can be deleted from the category workspace. Deletion releases their assigned budget and removes the subcategory label from attached expenses without deleting those expenses.
 
 ## Architecture
 

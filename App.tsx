@@ -13720,12 +13720,12 @@ const createStyles = (
       color: theme.text,
     },
     spendingByCategorySection: {
-      backgroundColor: '#10b98120',
+      backgroundColor: '#d1fae560',
       borderRadius: 16,
       padding: spacing.lg,
       marginBottom: spacing.lg,
       borderWidth: 1,
-      borderColor: '#10b98140',
+      borderColor: '#10b981',
     },
     spendingByCategoryHeader: {
       marginBottom: spacing.lg,
@@ -13773,7 +13773,7 @@ const createStyles = (
     categoryFilterSection: {
       paddingTop: spacing.lg,
       borderTopWidth: 1,
-      borderTopColor: '#10b98140',
+      borderTopColor: '#10b981',
     },
     transactionFiltersPanel: {
       backgroundColor: theme.surfaceStrong,

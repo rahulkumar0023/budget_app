@@ -13677,10 +13677,10 @@ const createStyles = (
       lineHeight: 17,
     },
     transactionHeroCard: {
-      backgroundColor: theme.surface,
+      backgroundColor: '#d1fae560',
       borderRadius: 20,
       borderWidth: 1,
-      borderColor: theme.divider,
+      borderColor: '#10b981',
       padding: 16,
       gap: 12,
       marginBottom: spacing.lg,

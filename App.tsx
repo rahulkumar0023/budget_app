@@ -7119,6 +7119,29 @@ export default function App() {
           </Text>
         </View>
         <Text style={styles.activityHeroMeta}>{activityHeroMeta}</Text>
+
+        {filteredTransactions.length > 0 && (
+          <View style={styles.transactionStatsGrid}>
+            <View style={styles.transactionStatItem}>
+              <Text style={styles.transactionStatLabel}>Income</Text>
+              <Text style={[styles.transactionStatValue, { color: currentTheme.successText }]}>
+                ${filteredIncomeTotal.toFixed(0)}
+              </Text>
+            </View>
+            <View style={styles.transactionStatItem}>
+              <Text style={styles.transactionStatLabel}>Entries</Text>
+              <Text style={styles.transactionStatValue}>{filteredTransactions.length}</Text>
+            </View>
+            <View style={styles.transactionStatItem}>
+              <Text style={styles.transactionStatLabel}>Largest</Text>
+              <Text style={styles.transactionStatValue}>${transactionStats.largestExpense.toFixed(0)}</Text>
+            </View>
+            <View style={styles.transactionStatItem}>
+              <Text style={styles.transactionStatLabel}>Daily Avg</Text>
+              <Text style={styles.transactionStatValue}>${transactionStats.averagePerDay.toFixed(0)}</Text>
+            </View>
+          </View>
+        )}
       </View>
 
       {activeMonth.transactions.length > 0 && (
@@ -7221,23 +7244,37 @@ export default function App() {
         </View>
       )}
 
-      {filteredTransactions.length > 0 && (
-        <>
-          <TransactionStatsBar
-            totalSpent={filteredTransactionTotal}
-            totalIncome={filteredIncomeTotal}
-            transactionCount={filteredTransactions.length}
-            largestExpense={transactionStats.largestExpense}
-            averagePerDay={transactionStats.averagePerDay}
-          />
+      {filteredTransactions.length > 0 && categoriesForFilter.length > 0 && (
+        <View style={styles.spendingByCategorySection}>
+          <View style={styles.spendingByCategoryHeader}>
+            <Text style={styles.settingsGroupLabel}>SPENDING BY CATEGORY</Text>
+          </View>
+          {categoriesForFilter.slice(0, 5).map((category) => {
+            const percentage = filteredTransactionTotal > 0 ? (category.amount / filteredTransactionTotal) * 100 : 0;
+            return (
+              <View key={category.id} style={styles.spendingByCategoryItem}>
+                <View style={styles.spendingByCategoryInfo}>
+                  <Text style={styles.spendingByCategoryIcon}>{category.icon}</Text>
+                  <View style={styles.spendingByCategoryTextGroup}>
+                    <Text style={styles.spendingByCategoryName}>{category.name}</Text>
+                    <View style={[styles.spendingByCategoryBar, { width: `${Math.min(percentage, 100)}%` }]} />
+                  </View>
+                </View>
+                <Text style={styles.spendingByCategoryAmount}>${category.amount.toFixed(0)}</Text>
+              </View>
+            );
+          })}
+
           {categoriesForFilter.length > 0 && (
-            <CategoryFilter
-              categories={categoriesForFilter}
-              selectedCategories={selectedCategories}
-              onCategoryToggle={handleCategoryToggle}
-            />
+            <View style={styles.categoryFilterSection}>
+              <CategoryFilter
+                categories={categoriesForFilter}
+                selectedCategories={selectedCategories}
+                onCategoryToggle={handleCategoryToggle}
+              />
+            </View>
           )}
-        </>
+        </View>
       )}
 
       <View style={styles.transactionListPanel}>
@@ -13654,6 +13691,89 @@ const createStyles = (
       fontWeight: '800',
       fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
       marginBottom: spacing.xs,
+    },
+    transactionStatsGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.md,
+      marginTop: spacing.lg,
+      paddingTop: spacing.lg,
+      borderTopWidth: 1,
+      borderTopColor: theme.divider,
+    },
+    transactionStatItem: {
+      flex: 1,
+      minWidth: '45%',
+    },
+    transactionStatLabel: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: theme.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginBottom: spacing.xs,
+    },
+    transactionStatValue: {
+      fontSize: 18,
+      fontWeight: '800',
+      fontFamily: 'Courier New, monospace',
+      color: theme.text,
+    },
+    spendingByCategorySection: {
+      backgroundColor: '#10b98120',
+      borderRadius: 16,
+      padding: spacing.lg,
+      marginBottom: spacing.lg,
+      borderWidth: 1,
+      borderColor: '#10b98140',
+    },
+    spendingByCategoryHeader: {
+      marginBottom: spacing.lg,
+    },
+    spendingByCategoryItem: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: spacing.lg,
+    },
+    spendingByCategoryInfo: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.md,
+      marginRight: spacing.md,
+    },
+    spendingByCategoryIcon: {
+      fontSize: 20,
+      width: 28,
+      textAlign: 'center',
+    },
+    spendingByCategoryTextGroup: {
+      flex: 1,
+      gap: spacing.sm,
+    },
+    spendingByCategoryName: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.text,
+    },
+    spendingByCategoryBar: {
+      height: 4,
+      backgroundColor: '#10b981',
+      borderRadius: 2,
+    },
+    spendingByCategoryAmount: {
+      fontSize: 14,
+      fontWeight: '700',
+      fontFamily: 'Courier New, monospace',
+      color: theme.text,
+      minWidth: 70,
+      textAlign: 'right',
+    },
+    categoryFilterSection: {
+      paddingTop: spacing.lg,
+      borderTopWidth: 1,
+      borderTopColor: '#10b98140',
     },
     transactionFiltersPanel: {
       backgroundColor: theme.surfaceStrong,

@@ -7084,6 +7084,318 @@ export default function App() {
     </>
   );
 
+  const renderSimpleTransactionsScreen = () => !hasActiveBudget ? (
+    <View style={styles.noBudgetTransactionsPage}>
+      <View style={styles.noBudgetTransactionsIcon}>
+        <View style={styles.noBudgetReceiptLine} />
+        <View style={[styles.noBudgetReceiptLine, styles.noBudgetReceiptLineShort]} />
+        <View style={styles.noBudgetReceiptDot} />
+      </View>
+      <Text style={styles.noBudgetTransactionsEyebrow}>TRANSACTIONS</Text>
+      <Text style={styles.noBudgetTransactionsTitle}>Plan first. Logging gets easier.</Text>
+      <Text style={styles.noBudgetTransactionsText}>
+        Create a few categories before adding expenses, so every purchase has a clear place from day one.
+      </Text>
+      <Pressable style={styles.noBudgetTransactionsButton} onPress={openBudgetBuilder}>
+        <Text style={styles.noBudgetTransactionsButtonText}>
+          {monthlyLimitNumber > 0 ? 'Continue budget' : 'Create budget'}
+        </Text>
+      </Pressable>
+      {previousBudgetMonth ? (
+        <Pressable onPress={copyPreviousBudgetIntoActiveMonth}>
+          <Text style={styles.noBudgetTransactionsCopy}>
+            Copy {getMonthLabel(previousBudgetMonth.id, localeTag)} instead
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
+  ) : (
+    <>
+      <View style={styles.transactionHeroCard}>
+        <View style={styles.transactionHeroHeader}>
+          <View>
+            <Text style={styles.settingsGroupLabel}>{activityScopeLabel.toUpperCase()}</Text>
+            <Text style={styles.transactionHeroTitle}>
+              {filteredTransactions.length > 0 ? formatCurrency(filteredTransactionTotal) : 'Ready to log'}
+            </Text>
+          </View>
+          {activeMonth.categories.length > 0 && (
+            <Button variant="primary" size="large" onPress={() => openExpenseCapture(undefined, null)}>
+              Add expense
+            </Button>
+          )}
+        </View>
+        <Text style={styles.activityHeroMeta}>{activityHeroMeta}</Text>
+      </View>
+
+      {activeMonth.transactions.length > 0 && (
+        <View style={styles.transactionFiltersPanel}>
+          <View style={styles.transactionFilterHeader}>
+            <Text style={styles.settingsGroupLabel}>FILTERS & SEARCH</Text>
+            <Pressable
+              onPress={() => {
+                animateUi();
+                setShowTransactionTools((current) => !current);
+              }}
+            >
+              <Text style={styles.transactionFilterToggle}>
+                {showTransactionTools || hasTransactionRefinements ? 'Hide' : 'Show'}
+              </Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.filterGroup}>
+            <Text style={styles.filterGroupLabel}>Window</Text>
+            <View style={styles.filterRowCompact}>
+              {(['today', 'week', 'month'] as ActivityScope[]).map((scope) => (
+                <Pressable
+                  key={scope}
+                  style={[
+                    styles.filterChip,
+                    activityScope === scope && styles.filterChipActive,
+                    !activeMonthIsCurrent && scope !== 'month' && styles.buttonDisabled,
+                  ]}
+                  onPress={() => {
+                    if (!activeMonthIsCurrent && scope !== 'month') return;
+                    setActivityScope(scope);
+                  }}
+                >
+                  <Text style={[styles.filterChipText, activityScope === scope && styles.filterChipTextActive]}>
+                    {scope.charAt(0).toUpperCase() + scope.slice(1)}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          {showTransactionTools || hasTransactionRefinements ? (
+            <>
+              <View style={styles.formShell}>
+                <View style={[styles.fieldCard, styles.fieldWide]}>
+                  <Text style={styles.fieldLabel}>Search</Text>
+                  <TextInput
+                    style={styles.fieldInput}
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder="Search note or category"
+                    placeholderTextColor={currentTheme.placeholder}
+                    selectionColor={currentTheme.accent}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.filterGroup}>
+                <Text style={styles.filterGroupLabel}>Status</Text>
+                <View style={styles.filterRowCompact}>
+                  {(['all', 'over', 'healthy'] as TransactionFilter[]).map((filter) => (
+                    <Pressable
+                      key={filter}
+                      style={[
+                        styles.filterChip,
+                        transactionFilter === filter && styles.filterChipActive,
+                      ]}
+                      onPress={() => setTransactionFilter(filter)}
+                    >
+                      <Text style={[styles.filterChipText, transactionFilter === filter && styles.filterChipTextActive]}>
+                        {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.filterGroup}>
+                <Text style={styles.filterGroupLabel}>Sort</Text>
+                <View style={styles.filterRowCompact}>
+                  {(['recent', 'highest'] as TransactionSort[]).map((sort) => (
+                    <Pressable
+                      key={sort}
+                      style={[
+                        styles.filterChip,
+                        transactionSort === sort && styles.filterChipActive,
+                      ]}
+                      onPress={() => setTransactionSort(sort)}
+                    >
+                      <Text style={[styles.filterChipText, transactionSort === sort && styles.filterChipTextActive]}>
+                        {sort.charAt(0).toUpperCase() + sort.slice(1)}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            </>
+          ) : null}
+        </View>
+      )}
+
+      {filteredTransactions.length > 0 && (
+        <>
+          <TransactionStatsBar
+            totalSpent={filteredTransactionTotal}
+            totalIncome={filteredIncomeTotal}
+            transactionCount={filteredTransactions.length}
+            largestExpense={transactionStats.largestExpense}
+            averagePerDay={transactionStats.averagePerDay}
+          />
+          {categoriesForFilter.length > 0 && (
+            <CategoryFilter
+              categories={categoriesForFilter}
+              selectedCategories={selectedCategories}
+              onCategoryToggle={handleCategoryToggle}
+            />
+          )}
+        </>
+      )}
+
+      <View style={styles.transactionListPanel}>
+        {filteredTransactions.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>
+              {activeMonth.transactions.length === 0 ? 'No expenses yet' : 'No matching transactions'}
+            </Text>
+            <Text style={styles.emptyText}>
+              {activeMonth.transactions.length === 0
+                ? 'Add your first expense and it will appear here.'
+                : 'Try a different filter or add a new expense above.'}
+            </Text>
+          </View>
+        ) : (() => {
+          const groupedByDate: Record<string, Transaction[]> = {};
+          visibleTransactions.forEach(transaction => {
+            const date = new Date(transaction.happenedAt);
+            const today = new Date();
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+
+            let dateLabel = '';
+            if (date.toDateString() === today.toDateString()) {
+              dateLabel = 'TODAY';
+            } else if (date.toDateString() === yesterday.toDateString()) {
+              dateLabel = 'YESTERDAY';
+            } else {
+              dateLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+            }
+
+            if (!groupedByDate[dateLabel]) {
+              groupedByDate[dateLabel] = [];
+            }
+            groupedByDate[dateLabel].push(transaction);
+          });
+
+          const listData: Array<{type: 'header', label: string} | {type: 'transaction', data: Transaction}> = [];
+          Object.entries(groupedByDate).forEach(([label, transactions]) => {
+            listData.push({ type: 'header', label });
+            transactions.forEach(t => listData.push({ type: 'transaction', data: t }));
+          });
+
+          return (
+            <FlatList
+              data={listData}
+              keyExtractor={(item) => item.type === 'header' ? item.label : item.data.id}
+              scrollEnabled={false}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => {
+                if (item.type === 'header') {
+                  return (
+                    <Text style={{
+                      fontSize: 12,
+                      fontWeight: '700',
+                      color: currentTheme.textMuted,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                      marginBottom: spacing.md,
+                      marginTop: spacing.lg,
+                    }}>
+                      {item.label}
+                    </Text>
+                  );
+                }
+
+                const transaction = item.data;
+                const isIncome = transaction.kind === 'income';
+                const category = categoryMap.get(transaction.categoryId);
+                const account = transaction.accountId ? accountMap.get(transaction.accountId) : null;
+                const theme = category ? categoryThemes[category.themeId] : categoryThemes.citrus;
+                const tone = categoryToneById.get(transaction.categoryId)?.tone ?? 'good';
+                const toneLabel = tone === 'alert' ? 'Over plan' : tone === 'warning' ? 'Watch' : 'Healthy';
+
+                return (
+                  <TransactionListItem
+                    swipeViewportWidth={swipeViewportWidth}
+                    swipeRailWidth={swipeRailWidth}
+                    icon={isIncome ? '+' : category ? getCategoryIcon(category.name) : '•'}
+                    title={isIncome ? transaction.note.trim() || 'Income' : getTransactionDisplayTitle(transaction, category?.name)}
+                    dateText={formatTransactionDate(transaction.happenedAt, localeTag)}
+                    amountText={`${isIncome ? '+' : ''}${formatCurrency(transaction.amount)}`}
+                    categoryLabel={isIncome ? 'Income' : category?.name ?? 'Uncategorized'}
+                    subcategoryLabel={isIncome ? undefined : transaction.subcategory}
+                    accountLabel={account?.name ?? null}
+                    recurring={!isIncome && transaction.recurring}
+                    tone={tone}
+                    toneLabel={toneLabel}
+                    palette={{
+                      surface: currentTheme.surfaceMuted,
+                      divider: currentTheme.divider,
+                      text: currentTheme.text,
+                      textMuted: currentTheme.textMuted,
+                      bubble: theme.bubble,
+                      bubbleText: theme.bubbleText,
+                      chip: theme.chip,
+                      chipText: theme.chipText,
+                      surfaceSoft: currentTheme.surfaceSoft,
+                      accentSoft: currentTheme.accentSoft,
+                      accentBorder: currentTheme.accentBorder,
+                      accentText: currentTheme.accentText,
+                      warningSurface: currentTheme.warningSurface,
+                      warningText: currentTheme.warningText,
+                      alertSurface: currentTheme.alertSurface,
+                      alertText: currentTheme.alertText,
+                      successSurface: currentTheme.successSurface,
+                      successText: currentTheme.successText,
+                    }}
+                    onEdit={() => (isIncome ? openIncomeCapture(transaction) : editTransaction(transaction))}
+                    onDelete={() => deleteTransaction(transaction.id)}
+                    onQuickLog={() => repeatTransaction(transaction)}
+                  />
+                );
+              }}
+            />
+          );
+        })()}
+
+        {hiddenTransactionCount > 0 ? (
+          <View style={styles.sectionActionRow}>
+            <Pressable
+              style={styles.tertiaryButton}
+              onPress={() => {
+                animateUi();
+                setShowAllTransactions(true);
+              }}
+            >
+              <Text style={styles.tertiaryButtonText}>
+                Show {hiddenTransactionCount} more transactions
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {showAllTransactions && !hasTransactionRefinements && filteredTransactions.length > 6 ? (
+          <View style={styles.sectionActionRow}>
+            <Pressable
+              style={styles.tertiaryButton}
+              onPress={() => {
+                animateUi();
+                setShowAllTransactions(false);
+              }}
+            >
+              <Text style={styles.tertiaryButtonText}>Show fewer transactions</Text>
+            </Pressable>
+          </View>
+        ) : null}
+      </View>
+    </>
+  );
+
   if (!activeMonth) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -7458,7 +7770,10 @@ export default function App() {
           </View>
         )}
 
-        {activeScreen === 'spend' ? (
+        {activeScreen === 'spend' ? renderSimpleTransactionsScreen() : null}
+
+        {/* OLD SPEND CODE - REPLACED */}
+        {false && activeScreen === 'spend' ? (
           !hasActiveBudget ? (
             <View style={styles.noBudgetTransactionsPage}>
               <View style={styles.noBudgetTransactionsIcon}>
@@ -7479,7 +7794,7 @@ export default function App() {
               {previousBudgetMonth ? (
                 <Pressable onPress={copyPreviousBudgetIntoActiveMonth}>
                   <Text style={styles.noBudgetTransactionsCopy}>
-                    Copy {getMonthLabel(previousBudgetMonth.id, localeTag)} instead
+                    Copy {getMonthLabel(previousBudgetMonth!.id, localeTag)} instead
                   </Text>
                 </Pressable>
               ) : null}
@@ -7848,6 +8163,7 @@ export default function App() {
           </>
           )
         ) : null}
+        {/* END OLD SPEND CODE */}
 
         {activeScreen === 'plan' ? renderSimplePlanScreen() : null}
 
@@ -13329,6 +13645,48 @@ const createStyles = (
       color: theme.textMuted,
       fontSize: 12,
       lineHeight: 17,
+    },
+    transactionHeroCard: {
+      backgroundColor: theme.surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: theme.divider,
+      padding: 16,
+      gap: 12,
+      marginBottom: spacing.lg,
+    },
+    transactionHeroHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: spacing.lg,
+    },
+    transactionHeroTitle: {
+      color: theme.text,
+      fontSize: 28,
+      fontWeight: '800',
+      fontFamily: Platform.select({ ios: 'Georgia', web: 'Georgia, serif' }),
+      marginBottom: spacing.xs,
+    },
+    transactionFiltersPanel: {
+      backgroundColor: theme.surfaceStrong,
+      borderRadius: 16,
+      padding: spacing.lg,
+      marginBottom: spacing.lg,
+    },
+    transactionFilterHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: spacing.lg,
+    },
+    transactionFilterToggle: {
+      color: theme.accentText,
+      fontWeight: '600',
+      fontSize: 13,
+    },
+    transactionListPanel: {
+      paddingHorizontal: spacing.lg,
     },
     activityHeroActions: {
       flexDirection: 'row',

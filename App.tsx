@@ -116,6 +116,8 @@ import {
   StatCard,
   BudgetDashboard,
   TransactionList,
+  TransactionStatsBar,
+  CategoryFilter,
 } from './src/components';
 import { useDesignTheme } from './src/hooks/useDesignTheme';
 import { spacing, typography, colors } from './src/styles/designTokens';
@@ -1154,6 +1156,7 @@ export default function App() {
   const [showTransactionTools, setShowTransactionTools] = useState(false);
   const [showAllTransactions, setShowAllTransactions] = useState(false);
   const [activityScope, setActivityScope] = useState<ActivityScope>('month');
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
   const [isThemeSheetOpen, setIsThemeSheetOpen] = useState(false);
   const [isLocaleSheetOpen, setIsLocaleSheetOpen] = useState(false);
   const [localeSheetMode, setLocaleSheetMode] = useState<LocaleSheetMode>('currency');
@@ -2400,6 +2403,7 @@ export default function App() {
     }
 
     const normalizedQuery = searchQuery.trim().toLowerCase();
+    const hasCategoryFilter = selectedCategories.size > 0;
 
     return sortTransactions(
       activeMonth.transactions.filter((transaction) => {
@@ -2428,7 +2432,9 @@ export default function App() {
               ? matchesActivityScope(transaction.happenedAt, activityScope)
               : false;
 
-        return matchesQuery && matchesFilter && matchesScope;
+        const matchesCategory = !hasCategoryFilter || selectedCategories.has(transaction.categoryId);
+
+        return matchesQuery && matchesFilter && matchesScope && matchesCategory;
       }),
       transactionSort,
     );
@@ -2441,6 +2447,7 @@ export default function App() {
     searchQuery,
     transactionFilter,
     transactionSort,
+    selectedCategories,
   ]);
   const hasTransactionRefinements =
     searchQuery.trim().length > 0 ||
@@ -2469,6 +2476,51 @@ export default function App() {
         .reduce((sum, transaction) => sum + transaction.amount, 0),
     [filteredTransactions],
   );
+
+  // Calculate stats for TransactionStatsBar
+  const transactionStats = useMemo(() => {
+    if (filteredTransactions.length === 0) {
+      return { largestExpense: 0, averagePerDay: 0 };
+    }
+    const expenses = filteredTransactions.filter((t) => t.kind !== 'income');
+    const largestExpense = expenses.length > 0
+      ? Math.max(...expenses.map((t) => t.amount))
+      : 0;
+
+    const dayCount = new Set(
+      filteredTransactions.map((t) => new Date(t.happenedAt).toDateString())
+    ).size;
+    const averagePerDay = dayCount > 0 ? filteredTransactionTotal / dayCount : 0;
+
+    return { largestExpense, averagePerDay };
+  }, [filteredTransactions, filteredTransactionTotal]);
+
+  // Build categories list with spending for filter
+  const categoriesForFilter = useMemo(() => {
+    const categorySpending = new Map<string, number>();
+    const categoryIcons = new Map<string, string>();
+
+    filteredTransactions
+      .filter((t) => t.kind !== 'income')
+      .forEach((t) => {
+        const current = categorySpending.get(t.categoryId) || 0;
+        categorySpending.set(t.categoryId, current + t.amount);
+        if (!categoryIcons.has(t.categoryId)) {
+          const category = categoryMap.get(t.categoryId);
+          if (category) {
+            categoryIcons.set(t.categoryId, getCategoryIcon(category.name));
+          }
+        }
+      });
+
+    return Array.from(categorySpending.entries()).map(([categoryId, amount]) => ({
+      id: categoryId,
+      name: categoryMap.get(categoryId)?.name || 'Unknown',
+      icon: categoryIcons.get(categoryId) || '•',
+      amount,
+    }));
+  }, [filteredTransactions, categoryMap]);
+
   const activityHeroMeta =
     activeMonth.categories.length === 0
       ? 'Create a few categories first, then start logging.'
@@ -2715,6 +2767,18 @@ export default function App() {
     setPaywallStatus('');
     setPaywallBusyAction(null);
     setIsPaywallVisible(true);
+  };
+
+  const handleCategoryToggle = (categoryId: string) => {
+    setSelectedCategories((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(categoryId)) {
+        newSet.delete(categoryId);
+      } else {
+        newSet.add(categoryId);
+      }
+      return newSet;
+    });
   };
 
   const handleManageSubscription = async () => {
@@ -7590,6 +7654,25 @@ export default function App() {
                   </View>
                 </>
               ) : null}
+
+              {filteredTransactions.length > 0 && (
+                <>
+                  <TransactionStatsBar
+                    totalSpent={filteredTransactionTotal}
+                    totalIncome={filteredIncomeTotal}
+                    transactionCount={filteredTransactions.length}
+                    largestExpense={transactionStats.largestExpense}
+                    averagePerDay={transactionStats.averagePerDay}
+                  />
+                  {categoriesForFilter.length > 0 && (
+                    <CategoryFilter
+                      categories={categoriesForFilter}
+                      selectedCategories={selectedCategories}
+                      onCategoryToggle={handleCategoryToggle}
+                    />
+                  )}
+                </>
+              )}
 
               {filteredTransactions.length > 0 ? (
                 <View style={styles.transactionSummaryRow}>
